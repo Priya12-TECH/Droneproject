@@ -12,7 +12,6 @@ class DroneSimulatorApp {
     this.clock = new THREE.Clock();
     this.elapsed = 0;
     this.followMode = false;
-    this.telemetryIframe = null;
     this._telemetryLastSent = 0;
     this.telemetryInput = new THREE.Vector3();
     this.windVector = new THREE.Vector3();
@@ -24,14 +23,26 @@ class DroneSimulatorApp {
     this.vslamPoints = [];
     this.leftPanelOpen = true;
     this.rightPanelOpen = true;
+    this.cameraDockOpen = true;
+    this.viewportLocked = false;
+    this.cameraViewMode = "auto";
+    this.lastAutoCameraDirection = "forward";
 
     this.ui = {
       panel: null,
       hud: null,
-      hudToggle: null,
-      panelToggle: null,
+      toolbar: null,
+      toggleTelemetryBtn: null,
+      toggleControlBtn: null,
+      toggleCameraBtn: null,
+      viewportLockBtn: null,
+      viewportResetBtn: null,
+      cameraDock: null,
+      telemetryEls: null,
       log: null,
       sideCameraCanvas: null,
+      sideCameraModeLabel: null,
+      sideCameraModeButtons: [],
       scenarioSelect: null,
       missionStatus: null,
       missionSpeed: null,
@@ -87,6 +98,18 @@ class DroneSimulatorApp {
       status: "IDLE",
     };
 
+    this.hudState = {
+      alt: 0,
+      spd: 0,
+      pitch: 0,
+      roll: 0,
+      bat: 100,
+      gps: 100,
+      cpu: 12,
+      status: "IDLE",
+      flying: false,
+    };
+
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0b1220);
     this.scene.fog = new THREE.Fog(0x0b1220, 20, 120);
@@ -118,8 +141,10 @@ class DroneSimulatorApp {
 
     this._setupScene();
     this._setupEvents();
+    this._setupViewportToolbar();
     this._setupHud();
     this._setupControlPanel();
+    this._setupCameraDock();
     this._setupIntroOverlay();
     this._setupAudio();
     this._setupTelemetryMessaging();
@@ -236,6 +261,7 @@ class DroneSimulatorApp {
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(window.innerWidth, window.innerHeight);
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      this._resizeSideCamera();
     });
 
     window.addEventListener("keydown", (event) => {
@@ -276,31 +302,234 @@ class DroneSimulatorApp {
     });
   }
 
+  _setupViewportToolbar() {
+    const toolbar = document.createElement("div");
+    toolbar.className = "viewport-toolbar";
+    toolbar.innerHTML = `
+      <button type="button" class="toolbar-btn toolbar-btn--active" data-action="telemetry">Telemetry</button>
+      <button type="button" class="toolbar-btn toolbar-btn--active" data-action="controls">Controls</button>
+      <button type="button" class="toolbar-btn toolbar-btn--active" data-action="camera">Camera</button>
+      <button type="button" class="toolbar-btn" data-action="lock">Lock Viewport</button>
+      <button type="button" class="toolbar-btn" data-action="reset">Reset View</button>
+    `.trim();
+
+    document.body.appendChild(toolbar);
+    this.ui.toolbar = toolbar;
+
+    this.ui.toggleTelemetryBtn = toolbar.querySelector(
+      '[data-action="telemetry"]',
+    );
+    this.ui.toggleControlBtn = toolbar.querySelector(
+      '[data-action="controls"]',
+    );
+    this.ui.toggleCameraBtn = toolbar.querySelector('[data-action="camera"]');
+    this.ui.viewportLockBtn = toolbar.querySelector('[data-action="lock"]');
+    this.ui.viewportResetBtn = toolbar.querySelector('[data-action="reset"]');
+
+    this.ui.toggleTelemetryBtn.addEventListener("click", () =>
+      this._toggleTelemetryPanel(),
+    );
+    this.ui.toggleControlBtn.addEventListener("click", () =>
+      this._toggleControlPanel(),
+    );
+    this.ui.toggleCameraBtn.addEventListener("click", () =>
+      this._toggleCameraDock(),
+    );
+    this.ui.viewportLockBtn.addEventListener("click", () =>
+      this._toggleViewportLock(),
+    );
+    this.ui.viewportResetBtn.addEventListener("click", () =>
+      this._resetViewport(),
+    );
+  }
+
+  _toggleTelemetryPanel() {
+    this.leftPanelOpen = !this.leftPanelOpen;
+    if (this.ui.hud) {
+      this.ui.hud.classList.toggle("hud--collapsed", !this.leftPanelOpen);
+    }
+    if (this.ui.toggleTelemetryBtn) {
+      this.ui.toggleTelemetryBtn.classList.toggle(
+        "toolbar-btn--active",
+        this.leftPanelOpen,
+      );
+    }
+  }
+
+  _toggleControlPanel() {
+    this.rightPanelOpen = !this.rightPanelOpen;
+    if (this.ui.panel) {
+      this.ui.panel.classList.toggle(
+        "sim-panel--collapsed",
+        !this.rightPanelOpen,
+      );
+    }
+    if (this.ui.toggleControlBtn) {
+      this.ui.toggleControlBtn.classList.toggle(
+        "toolbar-btn--active",
+        this.rightPanelOpen,
+      );
+    }
+  }
+
+  _toggleCameraDock() {
+    this.cameraDockOpen = !this.cameraDockOpen;
+    if (this.ui.cameraDock) {
+      this.ui.cameraDock.classList.toggle(
+        "camera-dock--collapsed",
+        !this.cameraDockOpen,
+      );
+    }
+    if (this.ui.toggleCameraBtn) {
+      this.ui.toggleCameraBtn.classList.toggle(
+        "toolbar-btn--active",
+        this.cameraDockOpen,
+      );
+    }
+  }
+
+  _toggleViewportLock() {
+    this.viewportLocked = !this.viewportLocked;
+    this.controls.enabled = !this.viewportLocked;
+    if (this.ui.viewportLockBtn) {
+      this.ui.viewportLockBtn.textContent = this.viewportLocked
+        ? "Unlock Viewport"
+        : "Lock Viewport";
+      this.ui.viewportLockBtn.classList.toggle(
+        "toolbar-btn--active",
+        this.viewportLocked,
+      );
+    }
+    this._logMavlink(
+      "COMMAND_LONG",
+      this.viewportLocked ? "VIEWPORT_LOCK ON" : "VIEWPORT_LOCK OFF",
+    );
+  }
+
+  _resetViewport() {
+    this.followMode = false;
+    this.viewportLocked = false;
+    this.controls.enabled = true;
+    this.camera.position.set(8, 6, 10);
+    this.controls.target.set(0, 2, 0);
+    this.controls.update();
+    if (this.ui.viewportLockBtn) {
+      this.ui.viewportLockBtn.textContent = "Lock Viewport";
+      this.ui.viewportLockBtn.classList.remove("toolbar-btn--active");
+    }
+    this._playUiBeep(520, 0.07, 0.015);
+    this._logMavlink("COMMAND_LONG", "VIEWPORT_RESET");
+  }
+
   _setupHud() {
     const hud = document.createElement("div");
     hud.className = "hud hud--telemetry";
     hud.innerHTML = `
-      <iframe
-        class="telemetry-iframe"
-        title="Drone Telemetry HUD"
-        src="/drone_telemetry.html"
-      ></iframe>
+      <div class="telemetry-panel" id="telemetry-panel">
+        <div class="telemetry-header">
+          <span class="telemetry-title">Telemetry</span>
+          <div class="telemetry-status-badge">
+            <span class="telemetry-status-dot" id="tel-status-dot"></span>
+            <span id="tel-status-text">IDLE</span>
+          </div>
+        </div>
+
+        <div class="telemetry-metric-grid">
+          <div class="telemetry-metric-cell">
+            <div class="telemetry-metric-label">Altitude</div>
+            <div class="telemetry-metric-value" id="tel-alt">0</div>
+            <div class="telemetry-metric-unit">meters</div>
+          </div>
+          <div class="telemetry-metric-cell">
+            <div class="telemetry-metric-label">Speed</div>
+            <div class="telemetry-metric-value" id="tel-spd">0.0</div>
+            <div class="telemetry-metric-unit">m/s</div>
+          </div>
+          <div class="telemetry-metric-cell">
+            <div class="telemetry-metric-label">Pitch</div>
+            <div class="telemetry-metric-value" id="tel-pitch">0</div>
+            <div class="telemetry-metric-unit">deg</div>
+          </div>
+          <div class="telemetry-metric-cell">
+            <div class="telemetry-metric-label">Roll</div>
+            <div class="telemetry-metric-value" id="tel-roll">0</div>
+            <div class="telemetry-metric-unit">deg</div>
+          </div>
+        </div>
+
+        <div class="telemetry-bars">
+          <div class="telemetry-bar-row">
+            <div class="telemetry-bar-meta">
+              <span class="telemetry-bar-label">Battery</span>
+              <span class="telemetry-bar-val" id="tel-bat-val">100%</span>
+            </div>
+            <div class="telemetry-bar-track"><div class="telemetry-bar-fill telemetry-bar-battery" id="tel-bat" style="width:100%"></div></div>
+          </div>
+          <div class="telemetry-bar-row">
+            <div class="telemetry-bar-meta">
+              <span class="telemetry-bar-label">GPS Signal</span>
+              <span class="telemetry-bar-val" id="tel-gps-val">100%</span>
+            </div>
+            <div class="telemetry-bar-track"><div class="telemetry-bar-fill telemetry-bar-gps" id="tel-gps" style="width:100%"></div></div>
+          </div>
+          <div class="telemetry-bar-row">
+            <div class="telemetry-bar-meta">
+              <span class="telemetry-bar-label">CPU Load</span>
+              <span class="telemetry-bar-val" id="tel-cpu-val">12%</span>
+            </div>
+            <div class="telemetry-bar-track"><div class="telemetry-bar-fill telemetry-bar-cpu" id="tel-cpu" style="width:12%"></div></div>
+          </div>
+        </div>
+
+        <div class="telemetry-controls">
+          <div class="telemetry-controls-label">Controls</div>
+          <div class="telemetry-btn-grid">
+            <button type="button" class="telemetry-btn" data-tel-action="forward">▲ Fwd</button>
+            <button type="button" class="telemetry-btn" data-tel-action="backward">▼ Back</button>
+            <button type="button" class="telemetry-btn" data-tel-action="up">↑ Up</button>
+            <button type="button" class="telemetry-btn" data-tel-action="down">↓ Down</button>
+            <button type="button" class="telemetry-btn" data-tel-action="left">◀ Left</button>
+            <button type="button" class="telemetry-btn" data-tel-action="right">▶ Right</button>
+            <button type="button" class="telemetry-btn telemetry-btn--hover" data-tel-action="hover">⏸ Hover</button>
+            <button type="button" class="telemetry-btn telemetry-btn--land" data-tel-action="land">⏬ Land</button>
+          </div>
+        </div>
+
+        <div class="telemetry-footer">
+          <span class="telemetry-footer-info">Drone v1.0 | UID-7E3F</span>
+          <span class="telemetry-footer-time" id="tel-clock">00:00:00</span>
+        </div>
+      </div>
     `.trim();
-    this.telemetryIframe = hud.querySelector("iframe");
+
+    hud.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-tel-action]");
+      if (!button) return;
+      this._handleTelemetryAction(button.dataset.telAction);
+      button.classList.add("telemetry-btn--pressed");
+      window.setTimeout(
+        () => button.classList.remove("telemetry-btn--pressed"),
+        180,
+      );
+    });
+
     document.body.appendChild(hud);
     this.ui.hud = hud;
-
-    const toggle = document.createElement("button");
-    toggle.className = "panel-toggle panel-toggle--left panel-toggle--active";
-    toggle.type = "button";
-    toggle.textContent = "Telemetry";
-    toggle.addEventListener("click", () => {
-      this.leftPanelOpen = !this.leftPanelOpen;
-      hud.classList.toggle("hud--collapsed", !this.leftPanelOpen);
-      toggle.classList.toggle("panel-toggle--active", this.leftPanelOpen);
-    });
-    document.body.appendChild(toggle);
-    this.ui.hudToggle = toggle;
+    this.ui.telemetryEls = {
+      statusText: hud.querySelector("#tel-status-text"),
+      statusDot: hud.querySelector("#tel-status-dot"),
+      alt: hud.querySelector("#tel-alt"),
+      spd: hud.querySelector("#tel-spd"),
+      pitch: hud.querySelector("#tel-pitch"),
+      roll: hud.querySelector("#tel-roll"),
+      batVal: hud.querySelector("#tel-bat-val"),
+      gpsVal: hud.querySelector("#tel-gps-val"),
+      cpuVal: hud.querySelector("#tel-cpu-val"),
+      bat: hud.querySelector("#tel-bat"),
+      gps: hud.querySelector("#tel-gps"),
+      cpu: hud.querySelector("#tel-cpu"),
+      clock: hud.querySelector("#tel-clock"),
+    };
   }
 
   _setupControlPanel() {
@@ -324,14 +553,6 @@ class DroneSimulatorApp {
           <option value="motor-failure">Motor Failure</option>
           <option value="obstacle">Obstacle Avoidance</option>
         </select>
-      </section>
-
-      <section class="sim-section">
-        <div class="sim-row">
-          <span class="sim-label">Camera View</span>
-          <span class="sim-chip">FPV</span>
-        </div>
-        <canvas id="side-camera" class="side-camera"></canvas>
       </section>
 
       <section class="sim-section">
@@ -367,7 +588,6 @@ class DroneSimulatorApp {
 
     this.ui.panel = panel;
     this.ui.log = panel.querySelector("#mavlink-log");
-    this.ui.sideCameraCanvas = panel.querySelector("#side-camera");
     this.ui.scenarioSelect = panel.querySelector("#scenario-select");
     this.ui.missionStatus = panel.querySelector("#mission-status");
     this.ui.missionSpeed = panel.querySelector("#mission-speed");
@@ -398,20 +618,6 @@ class DroneSimulatorApp {
       this.missionSpeed = Number(this.ui.missionSpeed.value);
       this.ui.missionSpeedValue.textContent = `${this.missionSpeed.toFixed(2)}x`;
     });
-
-    const toggle = document.createElement("button");
-    toggle.className = "panel-toggle panel-toggle--right panel-toggle--active";
-    toggle.type = "button";
-    toggle.textContent = "Control Panel";
-    toggle.addEventListener("click", () => {
-      this.rightPanelOpen = !this.rightPanelOpen;
-      panel.classList.toggle("sim-panel--collapsed", !this.rightPanelOpen);
-      toggle.classList.toggle("panel-toggle--active", this.rightPanelOpen);
-    });
-    document.body.appendChild(toggle);
-    this.ui.panelToggle = toggle;
-
-    this._setupSideCamera();
   }
 
   _setupIntroOverlay() {
@@ -439,8 +645,37 @@ class DroneSimulatorApp {
     });
   }
 
-  _setupSideCamera() {
-    if (!this.ui.sideCameraCanvas) return;
+  _setupCameraDock() {
+    const dock = document.createElement("aside");
+    dock.className = "camera-dock";
+    dock.innerHTML = `
+      <div class="camera-dock__header">
+        <span class="sim-label">Camera View</span>
+        <span id="camera-mode-label" class="sim-chip">AUTO</span>
+      </div>
+      <canvas id="side-camera" class="side-camera"></canvas>
+      <div class="camera-modes">
+        <button type="button" class="camera-mode-btn camera-mode-btn--active" data-camera="auto">Auto</button>
+        <button type="button" class="camera-mode-btn" data-camera="forward">Forward</button>
+        <button type="button" class="camera-mode-btn" data-camera="backward">Backward</button>
+        <button type="button" class="camera-mode-btn" data-camera="left">Left</button>
+        <button type="button" class="camera-mode-btn" data-camera="right">Right</button>
+      </div>
+    `.trim();
+    document.body.appendChild(dock);
+
+    this.ui.cameraDock = dock;
+    this.ui.sideCameraCanvas = dock.querySelector("#side-camera");
+    this.ui.sideCameraModeLabel = dock.querySelector("#camera-mode-label");
+    this.ui.sideCameraModeButtons = Array.from(
+      dock.querySelectorAll(".camera-mode-btn"),
+    );
+
+    this.ui.sideCameraModeButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this._setCameraMode(btn.dataset.camera || "forward");
+      });
+    });
 
     this.sideCamera = new THREE.PerspectiveCamera(75, 1.7, 0.1, 220);
     this.sideRenderer = new THREE.WebGLRenderer({
@@ -449,31 +684,95 @@ class DroneSimulatorApp {
       alpha: true,
     });
     this.sideRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.sideRenderer.setSize(330, 190, false);
+    this._resizeSideCamera();
+    this._setCameraMode("auto");
+  }
+
+  _resizeSideCamera() {
+    if (!this.sideRenderer || !this.ui.sideCameraCanvas || !this.sideCamera)
+      return;
+
+    const rect = this.ui.sideCameraCanvas.getBoundingClientRect();
+    const width = Math.max(220, Math.floor(rect.width || 340));
+    const height = Math.max(140, Math.floor(rect.height || width * 0.58));
+    this.sideRenderer.setSize(width, height, false);
+    this.sideCamera.aspect = width / height;
+    this.sideCamera.updateProjectionMatrix();
+  }
+
+  _setCameraMode(mode) {
+    const allowed = new Set(["auto", "forward", "backward", "left", "right"]);
+    this.cameraViewMode = allowed.has(mode) ? mode : "auto";
+
+    if (this.ui.sideCameraModeLabel) {
+      this.ui.sideCameraModeLabel.textContent =
+        this.cameraViewMode === "auto"
+          ? `AUTO • ${this.lastAutoCameraDirection.toUpperCase()}`
+          : this.cameraViewMode.toUpperCase();
+    }
+    if (this.ui.sideCameraModeButtons?.length) {
+      this.ui.sideCameraModeButtons.forEach((btn) => {
+        const active = btn.dataset.camera === this.cameraViewMode;
+        btn.classList.toggle("camera-mode-btn--active", active);
+      });
+    }
+    this._playUiBeep(560, 0.06, 0.012);
+    this._logMavlink(
+      "COMMAND_LONG",
+      `CAMERA_VIEW ${this.cameraViewMode.toUpperCase()}`,
+    );
   }
 
   _updateSideCamera() {
     if (!this.sideCamera || !this.sideRenderer) return;
 
-    const speed = this.drone.velocity.length();
-    const forward = this.drone.velocity.clone();
-    if (speed < 0.05) {
-      forward.set(0, 0, -1);
-    } else {
-      forward.normalize();
+    const velocityFlat = this.drone.velocity.clone();
+    velocityFlat.y = 0;
+
+    let motionDir = new THREE.Vector3(0, 0, -1);
+    if (velocityFlat.length() > 0.08) {
+      motionDir.copy(velocityFlat.normalize());
+      if (Math.abs(motionDir.x) > Math.abs(motionDir.z)) {
+        this.lastAutoCameraDirection = motionDir.x >= 0 ? "right" : "left";
+      } else {
+        this.lastAutoCameraDirection =
+          motionDir.z >= 0 ? "backward" : "forward";
+      }
     }
 
-    const camPos = this.drone.group.position
-      .clone()
-      .addScaledVector(forward, -0.45)
-      .add(new THREE.Vector3(0, 0.4, 0));
-    const lookAt = this.drone.group.position
-      .clone()
-      .addScaledVector(forward, 8)
-      .add(new THREE.Vector3(0, 0.15, 0));
+    const axisDir = {
+      forward: new THREE.Vector3(0, 0, -1),
+      backward: new THREE.Vector3(0, 0, 1),
+      left: new THREE.Vector3(-1, 0, 0),
+      right: new THREE.Vector3(1, 0, 0),
+    };
+
+    const activeDirection =
+      this.cameraViewMode === "auto"
+        ? this.lastAutoCameraDirection
+        : this.cameraViewMode;
+
+    if (this.cameraViewMode === "auto" && velocityFlat.length() <= 0.08) {
+      motionDir = axisDir[activeDirection].clone();
+    }
+
+    const viewDirection =
+      this.cameraViewMode === "auto"
+        ? motionDir.clone().normalize()
+        : axisDir[activeDirection].clone();
+
+    const upOffset = new THREE.Vector3(0, 0.42, 0);
+    const anchor = this.drone.group.position.clone().add(upOffset);
+    const camPos = anchor.clone().addScaledVector(viewDirection, -0.45);
+    const lookAt = anchor.clone().addScaledVector(viewDirection, 8);
 
     this.sideCamera.position.copy(camPos);
     this.sideCamera.lookAt(lookAt);
+
+    if (this.ui.sideCameraModeLabel && this.cameraViewMode === "auto") {
+      this.ui.sideCameraModeLabel.textContent = `AUTO • ${activeDirection.toUpperCase()}`;
+    }
+
     this.sideRenderer.render(this.scene, this.sideCamera);
   }
 
@@ -598,7 +897,7 @@ class DroneSimulatorApp {
   }
 
   _postTelemetry() {
-    if (!this.telemetryIframe || !this.telemetryIframe.contentWindow) return;
+    if (!this.ui.telemetryEls) return;
 
     const now = performance.now();
     if (now - this._telemetryLastSent < 50) return; // ~20Hz
@@ -615,79 +914,116 @@ class DroneSimulatorApp {
     const flying =
       alt > 0.05 && (spd > 0.05 || Math.abs(pitch) > 1 || Math.abs(roll) > 1);
 
-    this.telemetryIframe.contentWindow.postMessage(
-      {
-        type: "telemetry",
-        alt,
-        spd,
-        pitch,
-        roll,
-        flying,
-        battery: this.telemetry.battery,
-        gps: this.telemetry.gps,
-        cpu: this.telemetry.cpu,
-        status: this.telemetry.status,
-      },
-      "*",
-    );
+    const t = this.hudState;
+    const lerp = THREE.MathUtils.lerp;
+    t.alt = lerp(t.alt, alt, 0.1);
+    t.spd = lerp(t.spd, spd, 0.12);
+    t.pitch = lerp(t.pitch, pitch, 0.14);
+    t.roll = lerp(t.roll, roll, 0.14);
+    t.bat = lerp(t.bat, this.telemetry.battery, 0.14);
+    t.gps = lerp(t.gps, this.telemetry.gps, 0.14);
+    t.cpu = lerp(t.cpu, this.telemetry.cpu, 0.16);
+    t.flying = flying;
+    t.status = this.telemetry.status;
+
+    const els = this.ui.telemetryEls;
+    els.alt.textContent = `${Math.round(t.alt)}`;
+    els.spd.textContent = `${Math.abs(t.spd).toFixed(1)}`;
+    els.pitch.textContent = `${Math.round(t.pitch)}`;
+    els.roll.textContent = `${Math.round(t.roll)}`;
+    els.batVal.textContent = `${Math.round(t.bat)}%`;
+    els.gpsVal.textContent = `${Math.round(t.gps)}%`;
+    els.cpuVal.textContent = `${Math.round(t.cpu)}%`;
+    els.bat.style.width = `${THREE.MathUtils.clamp(t.bat, 0, 100)}%`;
+    els.gps.style.width = `${THREE.MathUtils.clamp(t.gps, 0, 100)}%`;
+    els.cpu.style.width = `${THREE.MathUtils.clamp(t.cpu, 0, 100)}%`;
+
+    this.ui.hud.classList.toggle("hud--flying", t.flying);
+    this._setTelemetryStatus(t.flying ? "FLYING" : t.status || "IDLE");
+
+    const bat = Math.round(t.bat);
+    if (bat < 20) {
+      els.bat.classList.add("telemetry-bar-battery--low");
+      els.bat.classList.remove("telemetry-bar-battery--warn");
+    } else if (bat < 50) {
+      els.bat.classList.add("telemetry-bar-battery--warn");
+      els.bat.classList.remove("telemetry-bar-battery--low");
+    } else {
+      els.bat.classList.remove(
+        "telemetry-bar-battery--warn",
+        "telemetry-bar-battery--low",
+      );
+    }
+
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    els.clock.textContent = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   }
 
   _setupTelemetryMessaging() {
-    window.addEventListener("message", (event) => {
-      const data = event.data;
-      if (!data || data.type !== "telemetry-cmd") return;
+    // Telemetry commands are handled directly from the injected HUD buttons.
+  }
 
-      // Telemetry HUD buttons are discrete clicks; keep the last command "active"
-      // until user clicks another command (e.g. Hover or Land).
-      switch (data.action) {
-        case "up":
-          this.commandMode = "manual";
-          this.telemetryInput.set(0, 1, 0);
-          this._playUiBeep(680, 0.08, 0.014);
-          this._logMavlink("COMMAND_LONG", "THRUST UP");
-          break;
-        case "down":
-          this.commandMode = "manual";
-          this.telemetryInput.set(0, -1, 0);
-          this._playUiBeep(430, 0.08, 0.014);
-          this._logMavlink("COMMAND_LONG", "THRUST DOWN");
-          break;
-        case "land":
-          this.commandMode = "land";
-          this.telemetryInput.set(0, 0, 0);
-          this._playUiBeep(300, 0.12, 0.02);
-          this._logMavlink("COMMAND_LONG", "NAV_LAND");
-          break;
-        case "forward":
-          this.commandMode = "manual";
-          this.telemetryInput.set(0, 0, -1);
-          this._logMavlink("COMMAND_LONG", "SET_FORWARD");
-          break;
-        case "backward":
-          this.commandMode = "manual";
-          this.telemetryInput.set(0, 0, 1);
-          this._logMavlink("COMMAND_LONG", "SET_BACKWARD");
-          break;
-        case "left":
-          this.commandMode = "manual";
-          this.telemetryInput.set(-1, 0, 0);
-          this._logMavlink("COMMAND_LONG", "SET_LEFT");
-          break;
-        case "right":
-          this.commandMode = "manual";
-          this.telemetryInput.set(1, 0, 0);
-          this._logMavlink("COMMAND_LONG", "SET_RIGHT");
-          break;
-        case "hover":
-          this.commandMode = "hover";
-          this.telemetryInput.set(0, 0, 0);
-          this._playUiBeep(620, 0.08, 0.015);
-          this._logMavlink("COMMAND_LONG", "SET_MODE HOVER");
-          break;
-        default:
-          break;
-      }
-    });
+  _setTelemetryStatus(status) {
+    if (!this.ui.telemetryEls) return;
+    const label = status || "IDLE";
+    const dot = this.ui.telemetryEls.statusDot;
+    this.ui.telemetryEls.statusText.textContent = label;
+    dot.className = "telemetry-status-dot";
+    if (label === "IDLE") dot.classList.add("telemetry-status-dot--red");
+    else if (label === "LANDING")
+      dot.classList.add("telemetry-status-dot--yellow");
+  }
+
+  _handleTelemetryAction(action) {
+    switch (action) {
+      case "up":
+        this.commandMode = "manual";
+        this.telemetryInput.set(0, 1, 0);
+        this._playUiBeep(680, 0.08, 0.014);
+        this._logMavlink("COMMAND_LONG", "THRUST UP");
+        break;
+      case "down":
+        this.commandMode = "manual";
+        this.telemetryInput.set(0, -1, 0);
+        this._playUiBeep(430, 0.08, 0.014);
+        this._logMavlink("COMMAND_LONG", "THRUST DOWN");
+        break;
+      case "land":
+        this.commandMode = "land";
+        this.telemetryInput.set(0, 0, 0);
+        this._playUiBeep(300, 0.12, 0.02);
+        this._logMavlink("COMMAND_LONG", "NAV_LAND");
+        break;
+      case "forward":
+        this.commandMode = "manual";
+        this.telemetryInput.set(0, 0, -1);
+        this._logMavlink("COMMAND_LONG", "SET_FORWARD");
+        break;
+      case "backward":
+        this.commandMode = "manual";
+        this.telemetryInput.set(0, 0, 1);
+        this._logMavlink("COMMAND_LONG", "SET_BACKWARD");
+        break;
+      case "left":
+        this.commandMode = "manual";
+        this.telemetryInput.set(-1, 0, 0);
+        this._logMavlink("COMMAND_LONG", "SET_LEFT");
+        break;
+      case "right":
+        this.commandMode = "manual";
+        this.telemetryInput.set(1, 0, 0);
+        this._logMavlink("COMMAND_LONG", "SET_RIGHT");
+        break;
+      case "hover":
+        this.commandMode = "hover";
+        this.telemetryInput.set(0, 0, 0);
+        this._playUiBeep(620, 0.08, 0.015);
+        this._logMavlink("COMMAND_LONG", "SET_MODE HOVER");
+        break;
+      default:
+        break;
+    }
   }
 
   _setScenario(name) {
@@ -1197,11 +1533,13 @@ class DroneSimulatorApp {
     this._emitMavlink(delta, effects, altitude, spd);
     this._refreshMissionUi();
 
-    if (this.followMode) {
+    if (this.followMode && !this.viewportLocked) {
       this._updateFollowCamera(delta);
     }
 
-    this.controls.update();
+    if (!this.viewportLocked) {
+      this.controls.update();
+    }
     this.renderer.render(this.scene, this.camera);
     this._updateSideCamera();
     this._postTelemetry();
