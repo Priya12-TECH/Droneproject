@@ -1,5 +1,5 @@
-import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 /**
  * Creates and configures OrbitControls.
@@ -24,7 +24,18 @@ export class KeyboardFlightController {
   constructor() {
     this.keys = new Set();
     this.enabled = true;
-    this._movementKeys = new Set(['KeyW', 'KeyS', 'KeyA', 'KeyD', 'KeyQ', 'KeyE', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
+    this._movementKeys = new Set([
+      "KeyW",
+      "KeyS",
+      "KeyA",
+      "KeyD",
+      "KeyQ",
+      "KeyE",
+      "ArrowUp",
+      "ArrowDown",
+      "ArrowLeft",
+      "ArrowRight",
+    ]);
 
     this._onKeyDown = (event) => {
       const normalizedKey = this._normalizeMovementKey(event);
@@ -41,17 +52,21 @@ export class KeyboardFlightController {
       }
     };
 
-    document.addEventListener('keydown', this._onKeyDown);
-    document.addEventListener('keyup', this._onKeyUp);
-    window.addEventListener('blur', () => this.keys.clear());
+    document.addEventListener("keydown", this._onKeyDown);
+    document.addEventListener("keyup", this._onKeyUp);
+    window.addEventListener("blur", () => this.keys.clear());
   }
 
   getInputVector() {
     if (!this.enabled) return new THREE.Vector3();
 
-    const x = ((this.keys.has('KeyD') || this.keys.has('ArrowRight')) ? 1 : 0) - ((this.keys.has('KeyA') || this.keys.has('ArrowLeft')) ? 1 : 0);
-    const y = (this.keys.has('KeyE') ? 1 : 0) - (this.keys.has('KeyQ') ? 1 : 0);
-    const z = ((this.keys.has('KeyS') || this.keys.has('ArrowDown')) ? 1 : 0) - ((this.keys.has('KeyW') || this.keys.has('ArrowUp')) ? 1 : 0);
+    const x =
+      (this.keys.has("KeyD") || this.keys.has("ArrowRight") ? 1 : 0) -
+      (this.keys.has("KeyA") || this.keys.has("ArrowLeft") ? 1 : 0);
+    const y = (this.keys.has("KeyE") ? 1 : 0) - (this.keys.has("KeyQ") ? 1 : 0);
+    const z =
+      (this.keys.has("KeyS") || this.keys.has("ArrowDown") ? 1 : 0) -
+      (this.keys.has("KeyW") || this.keys.has("ArrowUp") ? 1 : 0);
 
     const input = new THREE.Vector3(x, y, z);
     if (input.lengthSq() > 1) input.normalize();
@@ -63,34 +78,34 @@ export class KeyboardFlightController {
       return event.code;
     }
 
-    switch ((event.key || '').toLowerCase()) {
-      case 'w':
-        return 'KeyW';
-      case 's':
-        return 'KeyS';
-      case 'a':
-        return 'KeyA';
-      case 'd':
-        return 'KeyD';
-      case 'q':
-        return 'KeyQ';
-      case 'e':
-        return 'KeyE';
-      case 'arrowup':
-        return 'ArrowUp';
-      case 'arrowdown':
-        return 'ArrowDown';
-      case 'arrowleft':
-        return 'ArrowLeft';
-      case 'arrowright':
-        return 'ArrowRight';
+    switch ((event.key || "").toLowerCase()) {
+      case "w":
+        return "KeyW";
+      case "s":
+        return "KeyS";
+      case "a":
+        return "KeyA";
+      case "d":
+        return "KeyD";
+      case "q":
+        return "KeyQ";
+      case "e":
+        return "KeyE";
+      case "arrowup":
+        return "ArrowUp";
+      case "arrowdown":
+        return "ArrowDown";
+      case "arrowleft":
+        return "ArrowLeft";
+      case "arrowright":
+        return "ArrowRight";
       default:
         return null;
     }
   }
 
   dispose() {
-    document.removeEventListener('keydown', this._onKeyDown);
-    document.removeEventListener('keyup', this._onKeyUp);
+    document.removeEventListener("keydown", this._onKeyDown);
+    document.removeEventListener("keyup", this._onKeyUp);
   }
 }

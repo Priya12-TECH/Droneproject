@@ -1,7 +1,10 @@
-import * as THREE from 'three';
-import { Drone } from './components/Drone.js';
-import { createOrbitControls, KeyboardFlightController } from './utils/controls.js';
-import './styles.css';
+import * as THREE from "three";
+import { Drone } from "./components/Drone.js";
+import {
+  createOrbitControls,
+  KeyboardFlightController,
+} from "./utils/controls.js";
+import "./styles.css";
 
 class DroneSimulatorApp {
   constructor(container) {
@@ -11,12 +14,24 @@ class DroneSimulatorApp {
     this.telemetryIframe = null;
     this._telemetryLastSent = 0;
     this.telemetryInput = new THREE.Vector3();
+    this.commandMode = "manual";
+    this.telemetry = {
+      battery: 100,
+      gps: 100,
+      cpu: 12,
+      status: "IDLE",
+    };
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x0b1220);
     this.scene.fog = new THREE.Fog(0x0b1220, 20, 120);
 
-    this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 500);
+    this.camera = new THREE.PerspectiveCamera(
+      60,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      500,
+    );
     this.camera.position.set(8, 6, 10);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -63,7 +78,11 @@ class DroneSimulatorApp {
 
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(220, 220),
-      new THREE.MeshStandardMaterial({ color: 0x101a2d, metalness: 0.02, roughness: 0.95 })
+      new THREE.MeshStandardMaterial({
+        color: 0x101a2d,
+        metalness: 0.02,
+        roughness: 0.95,
+      }),
     );
     ground.rotation.x = -Math.PI * 0.5;
     ground.receiveShadow = true;
@@ -77,13 +96,23 @@ class DroneSimulatorApp {
     this.scene.add(axes);
 
     // Demo obstacles, also used by avoidance-force placeholder.
-    const obstacleMaterial = new THREE.MeshStandardMaterial({ color: 0x3c4c66, roughness: 0.65, metalness: 0.1 });
-    const obstacleA = new THREE.Mesh(new THREE.BoxGeometry(2, 4, 2), obstacleMaterial);
+    const obstacleMaterial = new THREE.MeshStandardMaterial({
+      color: 0x3c4c66,
+      roughness: 0.65,
+      metalness: 0.1,
+    });
+    const obstacleA = new THREE.Mesh(
+      new THREE.BoxGeometry(2, 4, 2),
+      obstacleMaterial,
+    );
     obstacleA.position.set(5, 2, -3);
     obstacleA.castShadow = true;
     obstacleA.receiveShadow = true;
 
-    const obstacleB = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 3.5, 20), obstacleMaterial);
+    const obstacleB = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.1, 1.1, 3.5, 20),
+      obstacleMaterial,
+    );
     obstacleB.position.set(-4, 1.75, 4);
     obstacleB.castShadow = true;
     obstacleB.receiveShadow = true;
@@ -93,35 +122,45 @@ class DroneSimulatorApp {
   }
 
   _setupEvents() {
-    this.renderer.domElement.addEventListener('pointerdown', () => {
+    this.renderer.domElement.addEventListener("pointerdown", () => {
       this.renderer.domElement.focus();
     });
 
-    window.addEventListener('resize', () => {
+    window.addEventListener("resize", () => {
       this.camera.aspect = window.innerWidth / window.innerHeight;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(window.innerWidth, window.innerHeight);
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     });
 
-    window.addEventListener('keydown', (event) => {
-      if (event.code === 'KeyC') {
+    window.addEventListener("keydown", (event) => {
+      if (event.code === "KeyC") {
         this.followMode = !this.followMode;
+      }
+
+      if (event.code === "Space") {
+        event.preventDefault();
+        this.commandMode = "hover";
+      }
+
+      if (event.code === "KeyL") {
+        event.preventDefault();
+        this.commandMode = "land";
       }
     });
   }
 
   _setupHud() {
-    const hud = document.createElement('div');
-    hud.className = 'hud hud--telemetry';
+    const hud = document.createElement("div");
+    hud.className = "hud hud--telemetry";
     hud.innerHTML = `
       <iframe
         class="telemetry-iframe"
         title="Drone Telemetry HUD"
-        src="/drone_telemetry%20%281%29.html"
+        src="/drone_telemetry.html"
       ></iframe>
     `.trim();
-    this.telemetryIframe = hud.querySelector('iframe');
+    this.telemetryIframe = hud.querySelector("iframe");
     document.body.appendChild(hud);
   }
 
@@ -140,42 +179,64 @@ class DroneSimulatorApp {
     const pitch = THREE.MathUtils.clamp(pitchDeg, -30, 30);
     const roll = THREE.MathUtils.clamp(rollDeg, -30, 30);
 
-    const flying = alt > 0.05 && (spd > 0.05 || Math.abs(pitch) > 1 || Math.abs(roll) > 1);
+    const flying =
+      alt > 0.05 && (spd > 0.05 || Math.abs(pitch) > 1 || Math.abs(roll) > 1);
 
     this.telemetryIframe.contentWindow.postMessage(
-      { type: 'telemetry', alt, spd, pitch, roll, flying },
-      '*'
+      {
+        type: "telemetry",
+        alt,
+        spd,
+        pitch,
+        roll,
+        flying,
+        battery: this.telemetry.battery,
+        gps: this.telemetry.gps,
+        cpu: this.telemetry.cpu,
+        status: this.telemetry.status,
+      },
+      "*",
     );
   }
 
   _setupTelemetryMessaging() {
-    window.addEventListener('message', (event) => {
+    window.addEventListener("message", (event) => {
       const data = event.data;
-      if (!data || data.type !== 'telemetry-cmd') return;
+      if (!data || data.type !== "telemetry-cmd") return;
 
       // Telemetry HUD buttons are discrete clicks; keep the last command "active"
       // until user clicks another command (e.g. Hover or Land).
       switch (data.action) {
-        case 'up':
+        case "up":
+          this.commandMode = "manual";
           this.telemetryInput.set(0, 1, 0);
           break;
-        case 'down':
-        case 'land':
+        case "down":
+          this.commandMode = "manual";
           this.telemetryInput.set(0, -1, 0);
           break;
-        case 'forward':
+        case "land":
+          this.commandMode = "land";
+          this.telemetryInput.set(0, 0, 0);
+          break;
+        case "forward":
+          this.commandMode = "manual";
           this.telemetryInput.set(0, 0, -1);
           break;
-        case 'backward':
+        case "backward":
+          this.commandMode = "manual";
           this.telemetryInput.set(0, 0, 1);
           break;
-        case 'left':
+        case "left":
+          this.commandMode = "manual";
           this.telemetryInput.set(-1, 0, 0);
           break;
-        case 'right':
+        case "right":
+          this.commandMode = "manual";
           this.telemetryInput.set(1, 0, 0);
           break;
-        case 'hover':
+        case "hover":
+          this.commandMode = "hover";
           this.telemetryInput.set(0, 0, 0);
           break;
         default:
@@ -185,17 +246,77 @@ class DroneSimulatorApp {
   }
 
   _updateFollowCamera(delta) {
-    const desiredPosition = this.drone.group.position.clone().add(this.followOffset);
+    const desiredPosition = this.drone.group.position
+      .clone()
+      .add(this.followOffset);
     this.camera.position.lerp(desiredPosition, 1 - Math.exp(-4 * delta));
-    this.controls.target.lerp(this.drone.group.position, 1 - Math.exp(-6 * delta));
+    this.controls.target.lerp(
+      this.drone.group.position,
+      1 - Math.exp(-6 * delta),
+    );
   }
 
   animate() {
     const delta = Math.min(this.clock.getDelta(), 0.05);
-    const input = this.keyboard.getInputVector().add(this.telemetryInput);
+
+    const keyboardInput = this.keyboard.getInputVector();
+
+    // Keyboard should always be able to take control back from LAND/HOVER modes.
+    if (keyboardInput.lengthSq() > 0) {
+      this.commandMode = "manual";
+      this.telemetryInput.set(0, 0, 0);
+    }
+
+    let input = keyboardInput.add(this.telemetryInput);
     if (input.lengthSq() > 1) input.normalize();
 
+    const altitude = Math.max(0, this.drone.group.position.y - 0.55);
+
+    if (this.commandMode === "hover") {
+      input.set(0, 0, 0);
+      this.drone.velocity.multiplyScalar(Math.pow(0.9, delta * 60));
+    } else if (this.commandMode === "land") {
+      input.set(0, -0.65, 0);
+      this.drone.velocity.x *= Math.pow(0.85, delta * 60);
+      this.drone.velocity.z *= Math.pow(0.85, delta * 60);
+      if (altitude <= 0.03) {
+        this.commandMode = "hover";
+        this.telemetryInput.set(0, 0, 0);
+      }
+    }
+
     this.drone.update(delta, input);
+
+    const spd = this.drone.velocity.length();
+    const isMoving = spd > 0.06 || altitude > 0.08;
+
+    if (isMoving) {
+      const drain = 0.3 + Math.max(0, spd - 0.3) * 0.06 + altitude * 0.01;
+      this.telemetry.battery = Math.max(
+        0,
+        this.telemetry.battery - drain * delta,
+      );
+    }
+
+    this.telemetry.cpu = THREE.MathUtils.clamp(
+      10 +
+        spd * 6 +
+        (this.commandMode === "hover" ? 2 : 0) +
+        (this.commandMode === "land" ? 4 : 0),
+      6,
+      95,
+    );
+    this.telemetry.gps = THREE.MathUtils.clamp(100 - altitude * 0.25, 70, 100);
+
+    if (this.commandMode === "land") {
+      this.telemetry.status = altitude > 0.05 ? "LANDING" : "IDLE";
+    } else if (isMoving) {
+      this.telemetry.status = "FLYING";
+    } else if (this.commandMode === "hover" && altitude > 0.05) {
+      this.telemetry.status = "HOVER";
+    } else {
+      this.telemetry.status = "IDLE";
+    }
 
     if (this.followMode) {
       this._updateFollowCamera(delta);
@@ -208,5 +329,5 @@ class DroneSimulatorApp {
   }
 }
 
-const root = document.getElementById('app');
+const root = document.getElementById("app");
 new DroneSimulatorApp(root);
