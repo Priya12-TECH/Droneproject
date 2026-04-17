@@ -22,10 +22,16 @@ class DroneSimulatorApp {
     this.obstacles = [];
     this.obstacleHelpers = [];
     this.vslamPoints = [];
+    this.leftPanelOpen = true;
+    this.rightPanelOpen = true;
 
     this.ui = {
       panel: null,
+      hud: null,
+      hudToggle: null,
+      panelToggle: null,
       log: null,
+      sideCameraCanvas: null,
       scenarioSelect: null,
       missionStatus: null,
       missionSpeed: null,
@@ -36,6 +42,18 @@ class DroneSimulatorApp {
       clearMissionBtn: null,
       scenarioBadge: null,
       introOverlay: null,
+    };
+
+    this.sideCamera = null;
+    this.sideRenderer = null;
+
+    this.audio = {
+      context: null,
+      master: null,
+      engineOsc: null,
+      engineGain: null,
+      unlocked: false,
+      collisionCooldown: 0,
     };
 
     this.mavlinkLogs = [];
@@ -103,6 +121,7 @@ class DroneSimulatorApp {
     this._setupHud();
     this._setupControlPanel();
     this._setupIntroOverlay();
+    this._setupAudio();
     this._setupTelemetryMessaging();
     this._setScenario("normal");
     this._logMavlink("SYSTEM", "DroneSimX ready. Select scenario and fly.");
@@ -168,8 +187,32 @@ class DroneSimulatorApp {
     obstacleB.castShadow = true;
     obstacleB.receiveShadow = true;
 
-    this.scene.add(obstacleA, obstacleB);
-    this.obstacles = [obstacleA, obstacleB];
+    const obstacleC = new THREE.Mesh(
+      new THREE.BoxGeometry(3.2, 2.8, 2.4),
+      obstacleMaterial,
+    );
+    obstacleC.position.set(16, 1.4, 12);
+    obstacleC.castShadow = true;
+    obstacleC.receiveShadow = true;
+
+    const obstacleD = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.4, 1.4, 4.2, 20),
+      obstacleMaterial,
+    );
+    obstacleD.position.set(-18, 2.1, -14);
+    obstacleD.castShadow = true;
+    obstacleD.receiveShadow = true;
+
+    const obstacleE = new THREE.Mesh(
+      new THREE.BoxGeometry(2.6, 3.6, 2.6),
+      obstacleMaterial,
+    );
+    obstacleE.position.set(10, 1.8, -18);
+    obstacleE.castShadow = true;
+    obstacleE.receiveShadow = true;
+
+    this.scene.add(obstacleA, obstacleB, obstacleC, obstacleD, obstacleE);
+    this.obstacles = [obstacleA, obstacleB, obstacleC, obstacleD, obstacleE];
     this.drone.setObstacles(this.obstacles);
     this.drone.setAvoidanceEnabled(false);
 
@@ -184,6 +227,7 @@ class DroneSimulatorApp {
   _setupEvents() {
     this.renderer.domElement.addEventListener("pointerdown", (event) => {
       this.renderer.domElement.focus();
+      this._unlockAudio();
       this._handleMissionPointing(event);
     });
 
@@ -195,8 +239,11 @@ class DroneSimulatorApp {
     });
 
     window.addEventListener("keydown", (event) => {
+      this._unlockAudio();
+
       if (event.code === "KeyC") {
         this.followMode = !this.followMode;
+        this._playUiBeep(720, 0.06, 0.016);
         this._logMavlink(
           "COMMAND_LONG",
           `CAMERA_MODE ${this.followMode ? "FOLLOW" : "FREE"}`,
@@ -206,12 +253,14 @@ class DroneSimulatorApp {
       if (event.code === "Space") {
         event.preventDefault();
         this.commandMode = "hover";
+        this._playUiBeep(640, 0.08, 0.018);
         this._logMavlink("COMMAND_LONG", "SET_MODE HOVER");
       }
 
       if (event.code === "KeyL") {
         event.preventDefault();
         this.commandMode = "land";
+        this._playUiBeep(310, 0.12, 0.02);
         this._logMavlink("COMMAND_LONG", "NAV_LAND");
       }
 
@@ -239,6 +288,19 @@ class DroneSimulatorApp {
     `.trim();
     this.telemetryIframe = hud.querySelector("iframe");
     document.body.appendChild(hud);
+    this.ui.hud = hud;
+
+    const toggle = document.createElement("button");
+    toggle.className = "panel-toggle panel-toggle--left panel-toggle--active";
+    toggle.type = "button";
+    toggle.textContent = "Telemetry";
+    toggle.addEventListener("click", () => {
+      this.leftPanelOpen = !this.leftPanelOpen;
+      hud.classList.toggle("hud--collapsed", !this.leftPanelOpen);
+      toggle.classList.toggle("panel-toggle--active", this.leftPanelOpen);
+    });
+    document.body.appendChild(toggle);
+    this.ui.hudToggle = toggle;
   }
 
   _setupControlPanel() {
@@ -262,6 +324,14 @@ class DroneSimulatorApp {
           <option value="motor-failure">Motor Failure</option>
           <option value="obstacle">Obstacle Avoidance</option>
         </select>
+      </section>
+
+      <section class="sim-section">
+        <div class="sim-row">
+          <span class="sim-label">Camera View</span>
+          <span class="sim-chip">FPV</span>
+        </div>
+        <canvas id="side-camera" class="side-camera"></canvas>
       </section>
 
       <section class="sim-section">
@@ -297,6 +367,7 @@ class DroneSimulatorApp {
 
     this.ui.panel = panel;
     this.ui.log = panel.querySelector("#mavlink-log");
+    this.ui.sideCameraCanvas = panel.querySelector("#side-camera");
     this.ui.scenarioSelect = panel.querySelector("#scenario-select");
     this.ui.missionStatus = panel.querySelector("#mission-status");
     this.ui.missionSpeed = panel.querySelector("#mission-speed");
@@ -327,6 +398,20 @@ class DroneSimulatorApp {
       this.missionSpeed = Number(this.ui.missionSpeed.value);
       this.ui.missionSpeedValue.textContent = `${this.missionSpeed.toFixed(2)}x`;
     });
+
+    const toggle = document.createElement("button");
+    toggle.className = "panel-toggle panel-toggle--right panel-toggle--active";
+    toggle.type = "button";
+    toggle.textContent = "Control Panel";
+    toggle.addEventListener("click", () => {
+      this.rightPanelOpen = !this.rightPanelOpen;
+      panel.classList.toggle("sim-panel--collapsed", !this.rightPanelOpen);
+      toggle.classList.toggle("panel-toggle--active", this.rightPanelOpen);
+    });
+    document.body.appendChild(toggle);
+    this.ui.panelToggle = toggle;
+
+    this._setupSideCamera();
   }
 
   _setupIntroOverlay() {
@@ -349,8 +434,167 @@ class DroneSimulatorApp {
 
     overlay.querySelector("#btn-start-demo").addEventListener("click", () => {
       overlay.classList.add("intro-overlay--hide");
+      this._unlockAudio();
       this.renderer.domElement.focus();
     });
+  }
+
+  _setupSideCamera() {
+    if (!this.ui.sideCameraCanvas) return;
+
+    this.sideCamera = new THREE.PerspectiveCamera(75, 1.7, 0.1, 220);
+    this.sideRenderer = new THREE.WebGLRenderer({
+      canvas: this.ui.sideCameraCanvas,
+      antialias: true,
+      alpha: true,
+    });
+    this.sideRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.sideRenderer.setSize(330, 190, false);
+  }
+
+  _updateSideCamera() {
+    if (!this.sideCamera || !this.sideRenderer) return;
+
+    const speed = this.drone.velocity.length();
+    const forward = this.drone.velocity.clone();
+    if (speed < 0.05) {
+      forward.set(0, 0, -1);
+    } else {
+      forward.normalize();
+    }
+
+    const camPos = this.drone.group.position
+      .clone()
+      .addScaledVector(forward, -0.45)
+      .add(new THREE.Vector3(0, 0.4, 0));
+    const lookAt = this.drone.group.position
+      .clone()
+      .addScaledVector(forward, 8)
+      .add(new THREE.Vector3(0, 0.15, 0));
+
+    this.sideCamera.position.copy(camPos);
+    this.sideCamera.lookAt(lookAt);
+    this.sideRenderer.render(this.scene, this.sideCamera);
+  }
+
+  _setupAudio() {
+    this.audio.context = null;
+  }
+
+  _unlockAudio() {
+    if (this.audio.unlocked) {
+      if (this.audio.context?.state === "suspended") {
+        this.audio.context.resume();
+      }
+      return;
+    }
+
+    const AudioContextRef = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextRef) return;
+
+    this.audio.context = new AudioContextRef();
+    const ctx = this.audio.context;
+    const master = ctx.createGain();
+    master.gain.value = 0.18;
+    master.connect(ctx.destination);
+
+    const osc = ctx.createOscillator();
+    osc.type = "sawtooth";
+    osc.frequency.value = 90;
+
+    const engineGain = ctx.createGain();
+    engineGain.gain.value = 0.0001;
+
+    osc.connect(engineGain);
+    engineGain.connect(master);
+    osc.start();
+
+    this.audio.master = master;
+    this.audio.engineOsc = osc;
+    this.audio.engineGain = engineGain;
+    this.audio.unlocked = true;
+    if (ctx.state === "suspended") {
+      ctx.resume();
+    }
+  }
+
+  _playUiBeep(freq = 640, duration = 0.08, gain = 0.016) {
+    if (!this.audio.unlocked || !this.audio.context || !this.audio.master)
+      return;
+    const ctx = this.audio.context;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(freq, now);
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(gain, now + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+    osc.connect(g);
+    g.connect(this.audio.master);
+    osc.start(now);
+    osc.stop(now + duration + 0.02);
+  }
+
+  _playCollisionThud() {
+    if (!this.audio.unlocked || !this.audio.context || !this.audio.master)
+      return;
+    const ctx = this.audio.context;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(160, now);
+    osc.frequency.exponentialRampToValueAtTime(60, now + 0.08);
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(0.028, now + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+
+    osc.connect(g);
+    g.connect(this.audio.master);
+    osc.start(now);
+    osc.stop(now + 0.14);
+  }
+
+  _updateAudio(speed, altitude, delta) {
+    if (
+      !this.audio.unlocked ||
+      !this.audio.context ||
+      !this.audio.engineOsc ||
+      !this.audio.engineGain
+    )
+      return;
+
+    this.audio.collisionCooldown = Math.max(
+      0,
+      this.audio.collisionCooldown - delta,
+    );
+
+    const targetGain =
+      altitude > 0.05
+        ? THREE.MathUtils.clamp(0.01 + speed * 0.005, 0.008, 0.09)
+        : 0.002;
+    const targetFreq = THREE.MathUtils.clamp(
+      88 + speed * 16 + altitude * 2,
+      85,
+      260,
+    );
+
+    this.audio.engineGain.gain.value = THREE.MathUtils.lerp(
+      this.audio.engineGain.gain.value,
+      targetGain,
+      0.08,
+    );
+    this.audio.engineOsc.frequency.value = THREE.MathUtils.lerp(
+      this.audio.engineOsc.frequency.value,
+      targetFreq,
+      0.08,
+    );
   }
 
   _postTelemetry() {
@@ -399,16 +643,19 @@ class DroneSimulatorApp {
         case "up":
           this.commandMode = "manual";
           this.telemetryInput.set(0, 1, 0);
+          this._playUiBeep(680, 0.08, 0.014);
           this._logMavlink("COMMAND_LONG", "THRUST UP");
           break;
         case "down":
           this.commandMode = "manual";
           this.telemetryInput.set(0, -1, 0);
+          this._playUiBeep(430, 0.08, 0.014);
           this._logMavlink("COMMAND_LONG", "THRUST DOWN");
           break;
         case "land":
           this.commandMode = "land";
           this.telemetryInput.set(0, 0, 0);
+          this._playUiBeep(300, 0.12, 0.02);
           this._logMavlink("COMMAND_LONG", "NAV_LAND");
           break;
         case "forward":
@@ -434,6 +681,7 @@ class DroneSimulatorApp {
         case "hover":
           this.commandMode = "hover";
           this.telemetryInput.set(0, 0, 0);
+          this._playUiBeep(620, 0.08, 0.015);
           this._logMavlink("COMMAND_LONG", "SET_MODE HOVER");
           break;
         default:
@@ -934,6 +1182,16 @@ class DroneSimulatorApp {
 
     const spd = this.drone.velocity.length();
 
+    this._updateAudio(spd, altitude, delta);
+    if (
+      this.drone.collisionsThisFrame > 0 &&
+      this.audio.collisionCooldown <= 0
+    ) {
+      this._playCollisionThud();
+      this.audio.collisionCooldown = 0.18;
+      this._logMavlink("OBSTACLE", "Collision prevented (solid obstacle)");
+    }
+
     this._updateTelemetryState(delta, altitude, spd, effects);
     this._updateJetsonVisuals(delta, effects);
     this._emitMavlink(delta, effects, altitude, spd);
@@ -945,6 +1203,7 @@ class DroneSimulatorApp {
 
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
+    this._updateSideCamera();
     this._postTelemetry();
     requestAnimationFrame(this.animate);
   }

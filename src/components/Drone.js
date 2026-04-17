@@ -21,6 +21,9 @@ export class Drone {
     this.propellers = [];
     this.obstacles = [];
     this.avoidanceEnabled = false;
+    this.collisionsThisFrame = 0;
+    this._collisionRadius = 0.62;
+    this._obstacleBounds = new THREE.Box3();
 
     this._buildDroneGeometry();
   }
@@ -165,6 +168,7 @@ export class Drone {
 
     this.group.position.addScaledVector(this.velocity, delta);
     this.group.position.y = Math.max(0.55, this.group.position.y);
+    this._resolveObstacleCollisions();
 
     // Optional tilt effect based on horizontal velocity.
     const tiltAmount = 0.045;
@@ -212,5 +216,70 @@ export class Drone {
     });
 
     return force;
+  }
+
+  _resolveObstacleCollisions() {
+    this.collisionsThisFrame = 0;
+    if (!this.obstacles.length) return;
+
+    for (let i = 0; i < this.obstacles.length; i += 1) {
+      const obstacle = this.obstacles[i];
+      this._obstacleBounds
+        .setFromObject(obstacle)
+        .expandByScalar(this._collisionRadius);
+
+      const p = this.group.position;
+      if (!this._obstacleBounds.containsPoint(p)) continue;
+
+      this.collisionsThisFrame += 1;
+
+      const distances = {
+        minX: Math.abs(p.x - this._obstacleBounds.min.x),
+        maxX: Math.abs(this._obstacleBounds.max.x - p.x),
+        minY: Math.abs(p.y - this._obstacleBounds.min.y),
+        maxY: Math.abs(this._obstacleBounds.max.y - p.y),
+        minZ: Math.abs(p.z - this._obstacleBounds.min.z),
+        maxZ: Math.abs(this._obstacleBounds.max.z - p.z),
+      };
+
+      let side = "minX";
+      let minDistance = distances.minX;
+      Object.entries(distances).forEach(([name, value]) => {
+        if (value < minDistance) {
+          minDistance = value;
+          side = name;
+        }
+      });
+
+      const epsilon = 0.001;
+      switch (side) {
+        case "minX":
+          p.x = this._obstacleBounds.min.x - epsilon;
+          this.velocity.x = Math.min(0, this.velocity.x) * 0.2;
+          break;
+        case "maxX":
+          p.x = this._obstacleBounds.max.x + epsilon;
+          this.velocity.x = Math.max(0, this.velocity.x) * 0.2;
+          break;
+        case "minY":
+          p.y = Math.max(0.55, this._obstacleBounds.min.y - epsilon);
+          this.velocity.y = Math.min(0, this.velocity.y) * 0.2;
+          break;
+        case "maxY":
+          p.y = this._obstacleBounds.max.y + epsilon;
+          this.velocity.y = Math.max(0, this.velocity.y) * 0.2;
+          break;
+        case "minZ":
+          p.z = this._obstacleBounds.min.z - epsilon;
+          this.velocity.z = Math.min(0, this.velocity.z) * 0.2;
+          break;
+        case "maxZ":
+          p.z = this._obstacleBounds.max.z + epsilon;
+          this.velocity.z = Math.max(0, this.velocity.z) * 0.2;
+          break;
+        default:
+          break;
+      }
+    }
   }
 }
