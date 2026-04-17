@@ -1,5 +1,5 @@
-import * as THREE from 'three';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 const ARM_LENGTH = 0.95;
 const MAX_ACCELERATION = 13.0;
@@ -12,7 +12,7 @@ const LINEAR_DAMPING = 0.88;
 export class Drone {
   constructor() {
     this.group = new THREE.Group();
-    this.group.name = 'Drone';
+    this.group.name = "Drone";
 
     this.velocity = new THREE.Vector3();
     this.acceleration = new THREE.Vector3();
@@ -20,6 +20,7 @@ export class Drone {
 
     this.propellers = [];
     this.obstacles = [];
+    this.avoidanceEnabled = false;
 
     this._buildDroneGeometry();
   }
@@ -27,14 +28,27 @@ export class Drone {
   _buildDroneGeometry() {
     const body = new THREE.Mesh(
       new THREE.BoxGeometry(1.3, 0.35, 1.0),
-      new THREE.MeshStandardMaterial({ color: 0x2a2f3b, metalness: 0.55, roughness: 0.35 })
+      new THREE.MeshStandardMaterial({
+        color: 0x2a2f3b,
+        metalness: 0.55,
+        roughness: 0.35,
+      }),
     );
     body.castShadow = true;
     body.receiveShadow = true;
     this.group.add(body);
 
-    const armGeometry = new THREE.CylinderGeometry(0.065, 0.065, ARM_LENGTH * 2, 16);
-    const armMaterial = new THREE.MeshStandardMaterial({ color: 0x2a2f3b, metalness: 0.6, roughness: 0.25 });
+    const armGeometry = new THREE.CylinderGeometry(
+      0.065,
+      0.065,
+      ARM_LENGTH * 2,
+      16,
+    );
+    const armMaterial = new THREE.MeshStandardMaterial({
+      color: 0x2a2f3b,
+      metalness: 0.6,
+      roughness: 0.25,
+    });
 
     const arm1 = new THREE.Mesh(armGeometry, armMaterial);
     arm1.rotation.z = Math.PI * 0.5;
@@ -48,18 +62,29 @@ export class Drone {
     arm2.castShadow = true;
     this.group.add(arm2);
 
-    const motorMaterial = new THREE.MeshStandardMaterial({ color: 0x2a2f3b, metalness: 0.4, roughness: 0.4 });
-    const propMaterial = new THREE.MeshStandardMaterial({ color: 0x2a2f3b, metalness: 0.2, roughness: 0.7 });
+    const motorMaterial = new THREE.MeshStandardMaterial({
+      color: 0x2a2f3b,
+      metalness: 0.4,
+      roughness: 0.4,
+    });
+    const propMaterial = new THREE.MeshStandardMaterial({
+      color: 0x2a2f3b,
+      metalness: 0.2,
+      roughness: 0.7,
+    });
 
     const rotorPoints = [
       new THREE.Vector3(ARM_LENGTH, 0.08, ARM_LENGTH),
       new THREE.Vector3(-ARM_LENGTH, 0.08, ARM_LENGTH),
       new THREE.Vector3(ARM_LENGTH, 0.08, -ARM_LENGTH),
-      new THREE.Vector3(-ARM_LENGTH, 0.08, -ARM_LENGTH)
+      new THREE.Vector3(-ARM_LENGTH, 0.08, -ARM_LENGTH),
     ];
 
     rotorPoints.forEach((position) => {
-      const motor = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.14, 20), motorMaterial);
+      const motor = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.12, 0.12, 0.14, 20),
+        motorMaterial,
+      );
       motor.position.copy(position);
       motor.castShadow = true;
       this.group.add(motor);
@@ -86,6 +111,10 @@ export class Drone {
    */
   setObstacles(obstacles) {
     this.obstacles = obstacles;
+  }
+
+  setAvoidanceEnabled(enabled) {
+    this.avoidanceEnabled = Boolean(enabled);
   }
 
   /**
@@ -115,7 +144,7 @@ export class Drone {
     this._targetAcceleration.copy(input).multiplyScalar(MAX_ACCELERATION);
 
     // Placeholder for future obstacle-avoidance force blending.
-    if (this.obstacles.length) {
+    if (this.avoidanceEnabled && this.obstacles.length) {
       this._targetAcceleration.add(this._computeAvoidanceForce());
     }
 
@@ -139,10 +168,26 @@ export class Drone {
 
     // Optional tilt effect based on horizontal velocity.
     const tiltAmount = 0.045;
-    const targetTiltX = THREE.MathUtils.clamp(this.velocity.z * tiltAmount, -0.35, 0.35);
-    const targetTiltZ = THREE.MathUtils.clamp(-this.velocity.x * tiltAmount, -0.35, 0.35);
-    this.group.rotation.x = THREE.MathUtils.lerp(this.group.rotation.x, targetTiltX, 1 - Math.exp(-10 * delta));
-    this.group.rotation.z = THREE.MathUtils.lerp(this.group.rotation.z, targetTiltZ, 1 - Math.exp(-10 * delta));
+    const targetTiltX = THREE.MathUtils.clamp(
+      this.velocity.z * tiltAmount,
+      -0.35,
+      0.35,
+    );
+    const targetTiltZ = THREE.MathUtils.clamp(
+      -this.velocity.x * tiltAmount,
+      -0.35,
+      0.35,
+    );
+    this.group.rotation.x = THREE.MathUtils.lerp(
+      this.group.rotation.x,
+      targetTiltX,
+      1 - Math.exp(-10 * delta),
+    );
+    this.group.rotation.z = THREE.MathUtils.lerp(
+      this.group.rotation.z,
+      targetTiltZ,
+      1 - Math.exp(-10 * delta),
+    );
 
     // Propeller speed scales with current acceleration magnitude.
     const spinSpeed = 20 + this.acceleration.length() * 1.4;
@@ -160,7 +205,8 @@ export class Drone {
       const away = this.group.position.clone().sub(obstacle.position);
       const distance = away.length();
       if (distance > 0.0001 && distance < threshold) {
-        const strength = ((threshold - distance) / threshold) * MAX_ACCELERATION * 0.5;
+        const strength =
+          ((threshold - distance) / threshold) * MAX_ACCELERATION * 0.5;
         force.add(away.normalize().multiplyScalar(strength));
       }
     });
