@@ -4,6 +4,7 @@ import {
   createOrbitControls,
   KeyboardFlightController,
 } from "./utils/controls.js";
+import { initWorldEnvironment } from "../world-environment.js";
 import "./styles.css";
 
 class DroneSimulatorApp {
@@ -156,36 +157,8 @@ class DroneSimulatorApp {
   }
 
   _setupScene() {
-    const ambient = new THREE.AmbientLight(0xffffff, 0.32);
-    this.scene.add(ambient);
-
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    dirLight.position.set(12, 20, 8);
-    dirLight.castShadow = true;
-    dirLight.shadow.mapSize.set(2048, 2048);
-    dirLight.shadow.camera.left = -35;
-    dirLight.shadow.camera.right = 35;
-    dirLight.shadow.camera.top = 35;
-    dirLight.shadow.camera.bottom = -35;
-    dirLight.shadow.camera.near = 1;
-    dirLight.shadow.camera.far = 120;
-    this.scene.add(dirLight);
-
-    const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(220, 220),
-      new THREE.MeshStandardMaterial({
-        color: 0x101a2d,
-        metalness: 0.02,
-        roughness: 0.95,
-      }),
-    );
-    ground.rotation.x = -Math.PI * 0.5;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
-
-    const grid = new THREE.GridHelper(220, 70, 0x3d6aa2, 0x243755);
-    grid.position.y = 0.01;
-    this.scene.add(grid);
+    // Use shared 3D environment system (ground, fog, lighting, and env switch UI).
+    initWorldEnvironment(this.scene, this.renderer);
 
     const axes = new THREE.AxesHelper(2.5);
     this.scene.add(axes);
