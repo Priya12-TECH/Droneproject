@@ -29,52 +29,144 @@ export class Drone {
   }
 
   _buildDroneGeometry() {
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(1.3, 0.35, 1.0),
-      new THREE.MeshStandardMaterial({
-        color: 0x2a2f3b,
-        metalness: 0.55,
-        roughness: 0.35,
-      }),
-    );
-    body.castShadow = true;
-    body.receiveShadow = true;
-    this.group.add(body);
-
-    const armGeometry = new THREE.CylinderGeometry(
-      0.065,
-      0.065,
-      ARM_LENGTH * 2,
-      16,
-    );
-    const armMaterial = new THREE.MeshStandardMaterial({
-      color: 0x2a2f3b,
-      metalness: 0.6,
-      roughness: 0.25,
+    const bodyMaterial = new THREE.MeshStandardMaterial({
+      color: 0x202835,
+      metalness: 0.58,
+      roughness: 0.32,
+    });
+    const accentMaterial = new THREE.MeshStandardMaterial({
+      color: 0x2f3f58,
+      metalness: 0.45,
+      roughness: 0.4,
+    });
+    const matteMaterial = new THREE.MeshStandardMaterial({
+      color: 0x171d27,
+      metalness: 0.2,
+      roughness: 0.72,
+    });
+    const motorMaterial = new THREE.MeshStandardMaterial({
+      color: 0x252f3f,
+      metalness: 0.55,
+      roughness: 0.35,
+    });
+    const propMaterial = new THREE.MeshStandardMaterial({
+      color: 0x2a3446,
+      metalness: 0.15,
+      roughness: 0.78,
     });
 
-    const arm1 = new THREE.Mesh(armGeometry, armMaterial);
+    // Main fuselage.
+    const fuselage = new THREE.Mesh(
+      new THREE.BoxGeometry(1.25, 0.26, 0.82),
+      bodyMaterial,
+    );
+    fuselage.castShadow = true;
+    fuselage.receiveShadow = true;
+    this.group.add(fuselage);
+
+    // Top canopy.
+    const canopy = new THREE.Mesh(
+      new THREE.SphereGeometry(0.38, 24, 16, 0, Math.PI * 2, 0, Math.PI * 0.55),
+      new THREE.MeshStandardMaterial({
+        color: 0x344966,
+        metalness: 0.35,
+        roughness: 0.22,
+      }),
+    );
+    canopy.position.set(0, 0.14, -0.02);
+    canopy.scale.set(1.2, 0.55, 1.05);
+    canopy.castShadow = true;
+    this.group.add(canopy);
+
+    // Battery pack detail.
+    const batteryPack = new THREE.Mesh(
+      new THREE.BoxGeometry(0.6, 0.1, 0.38),
+      accentMaterial,
+    );
+    batteryPack.position.set(0, 0.2, 0.18);
+    batteryPack.castShadow = true;
+    batteryPack.receiveShadow = true;
+    this.group.add(batteryPack);
+
+    // GPS puck.
+    const gpsPuck = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.1, 0.1, 0.04, 20),
+      matteMaterial,
+    );
+    gpsPuck.position.set(0, 0.28, 0.2);
+    gpsPuck.castShadow = true;
+    this.group.add(gpsPuck);
+
+    // Front camera module.
+    const cameraPod = new THREE.Mesh(
+      new THREE.BoxGeometry(0.28, 0.14, 0.2),
+      matteMaterial,
+    );
+    cameraPod.position.set(0, -0.08, -0.5);
+    cameraPod.castShadow = true;
+    cameraPod.receiveShadow = true;
+    this.group.add(cameraPod);
+
+    const cameraLens = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.05, 0.06, 18),
+      new THREE.MeshStandardMaterial({
+        color: 0x11151d,
+        metalness: 0.72,
+        roughness: 0.18,
+      }),
+    );
+    cameraLens.rotation.x = Math.PI * 0.5;
+    cameraLens.position.set(0, -0.08, -0.62);
+    cameraLens.castShadow = true;
+    this.group.add(cameraLens);
+
+    // Landing gear (two skids with supports).
+    const skidGeometry = new THREE.CylinderGeometry(0.025, 0.025, 1.0, 12);
+    const leftSkid = new THREE.Mesh(skidGeometry, accentMaterial);
+    leftSkid.rotation.z = Math.PI * 0.5;
+    leftSkid.position.set(-0.28, -0.36, 0.02);
+    const rightSkid = leftSkid.clone();
+    rightSkid.position.x = 0.28;
+
+    const gearStrutGeometry = new THREE.CylinderGeometry(
+      0.018,
+      0.018,
+      0.24,
+      10,
+    );
+    const strutA = new THREE.Mesh(gearStrutGeometry, accentMaterial);
+    strutA.position.set(-0.28, -0.22, -0.2);
+    const strutB = strutA.clone();
+    strutB.position.set(-0.28, -0.22, 0.24);
+    const strutC = strutA.clone();
+    strutC.position.set(0.28, -0.22, -0.2);
+    const strutD = strutA.clone();
+    strutD.position.set(0.28, -0.22, 0.24);
+
+    [leftSkid, rightSkid, strutA, strutB, strutC, strutD].forEach((mesh) => {
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.group.add(mesh);
+    });
+
+    // Arms.
+    const armGeometry = new THREE.CylinderGeometry(
+      0.05,
+      0.05,
+      ARM_LENGTH * 2.05,
+      14,
+    );
+    const arm1 = new THREE.Mesh(armGeometry, bodyMaterial);
     arm1.rotation.z = Math.PI * 0.5;
     arm1.rotation.y = Math.PI * 0.25;
     arm1.castShadow = true;
     this.group.add(arm1);
 
-    const arm2 = new THREE.Mesh(armGeometry, armMaterial);
+    const arm2 = new THREE.Mesh(armGeometry, bodyMaterial);
     arm2.rotation.z = Math.PI * 0.5;
     arm2.rotation.y = -Math.PI * 0.25;
     arm2.castShadow = true;
     this.group.add(arm2);
-
-    const motorMaterial = new THREE.MeshStandardMaterial({
-      color: 0x2a2f3b,
-      metalness: 0.4,
-      roughness: 0.4,
-    });
-    const propMaterial = new THREE.MeshStandardMaterial({
-      color: 0x2a2f3b,
-      metalness: 0.2,
-      roughness: 0.7,
-    });
 
     const rotorPoints = [
       new THREE.Vector3(ARM_LENGTH, 0.08, ARM_LENGTH),
@@ -83,28 +175,62 @@ export class Drone {
       new THREE.Vector3(-ARM_LENGTH, 0.08, -ARM_LENGTH),
     ];
 
-    rotorPoints.forEach((position) => {
+    rotorPoints.forEach((position, index) => {
       const motor = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.12, 0.12, 0.14, 20),
+        new THREE.CylinderGeometry(0.115, 0.125, 0.16, 20),
         motorMaterial,
       );
       motor.position.copy(position);
       motor.castShadow = true;
+      motor.receiveShadow = true;
       this.group.add(motor);
 
-      const propeller = new THREE.Group();
-      propeller.position.copy(position).add(new THREE.Vector3(0, 0.09, 0));
+      // Protective duct ring around rotor.
+      const duct = new THREE.Mesh(
+        new THREE.TorusGeometry(0.27, 0.02, 12, 42),
+        accentMaterial,
+      );
+      duct.rotation.x = Math.PI * 0.5;
+      duct.position.copy(position).add(new THREE.Vector3(0, 0.06, 0));
+      duct.castShadow = true;
+      this.group.add(duct);
 
-      const bladeGeometry = new THREE.BoxGeometry(0.65, 0.018, 0.08);
+      const propeller = new THREE.Group();
+      propeller.position.copy(position).add(new THREE.Vector3(0, 0.105, 0));
+
+      const bladeGeometry = new THREE.BoxGeometry(0.58, 0.014, 0.055);
       const blade1 = new THREE.Mesh(bladeGeometry, propMaterial);
       blade1.castShadow = true;
 
       const blade2 = blade1.clone();
       blade2.rotation.y = Math.PI * 0.5;
 
-      propeller.add(blade1, blade2);
+      const hub = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.042, 0.042, 0.022, 16),
+        matteMaterial,
+      );
+      hub.castShadow = true;
+
+      propeller.add(blade1, blade2, hub);
       this.group.add(propeller);
       this.propellers.push(propeller);
+
+      // Navigation lights: front green, rear red.
+      const isFront = index >= 2;
+      const light = new THREE.Mesh(
+        new THREE.SphereGeometry(0.028, 10, 10),
+        new THREE.MeshStandardMaterial({
+          color: isFront ? 0x39ff6e : 0xff4a4a,
+          emissive: isFront ? 0x1e7d46 : 0x7d1e1e,
+          emissiveIntensity: 0.8,
+          metalness: 0.15,
+          roughness: 0.45,
+        }),
+      );
+      light.position
+        .copy(position)
+        .add(new THREE.Vector3(0, 0.11, isFront ? -0.08 : 0.08));
+      this.group.add(light);
     });
   }
 
