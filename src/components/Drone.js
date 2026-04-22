@@ -22,8 +22,9 @@ export class Drone {
     this.obstacles = [];
     this.avoidanceEnabled = false;
     this.collisionsThisFrame = 0;
-    this._collisionRadius = 0.62;
+    this._collisionPadding = 0.05;
     this._obstacleBounds = new THREE.Box3();
+    this._droneBounds = new THREE.Box3();
 
     this._buildDroneGeometry();
   }
@@ -352,59 +353,53 @@ export class Drone {
       const obstacle = this.obstacles[i];
       this._obstacleBounds
         .setFromObject(obstacle)
-        .expandByScalar(this._collisionRadius);
+        .expandByScalar(this._collisionPadding);
+      this._droneBounds.setFromObject(this.group);
 
-      const p = this.group.position;
-      if (!this._obstacleBounds.containsPoint(p)) continue;
+      if (!this._droneBounds.intersectsBox(this._obstacleBounds)) continue;
 
       this.collisionsThisFrame += 1;
 
-      const distances = {
-        minX: Math.abs(p.x - this._obstacleBounds.min.x),
-        maxX: Math.abs(this._obstacleBounds.max.x - p.x),
-        minY: Math.abs(p.y - this._obstacleBounds.min.y),
-        maxY: Math.abs(this._obstacleBounds.max.y - p.y),
-        minZ: Math.abs(p.z - this._obstacleBounds.min.z),
-        maxZ: Math.abs(this._obstacleBounds.max.z - p.z),
-      };
+      const overlapX =
+        Math.min(this._droneBounds.max.x, this._obstacleBounds.max.x) -
+        Math.max(this._droneBounds.min.x, this._obstacleBounds.min.x);
+      const overlapY =
+        Math.min(this._droneBounds.max.y, this._obstacleBounds.max.y) -
+        Math.max(this._droneBounds.min.y, this._obstacleBounds.min.y);
+      const overlapZ =
+        Math.min(this._droneBounds.max.z, this._obstacleBounds.max.z) -
+        Math.max(this._droneBounds.min.z, this._obstacleBounds.min.z);
 
-      let side = "minX";
-      let minDistance = distances.minX;
-      Object.entries(distances).forEach(([name, value]) => {
-        if (value < minDistance) {
-          minDistance = value;
-          side = name;
+      const overlaps = { x: overlapX, y: overlapY, z: overlapZ };
+
+      let axis = "x";
+      let minOverlap = overlaps.x;
+      Object.entries(overlaps).forEach(([name, value]) => {
+        if (value < minOverlap) {
+          minOverlap = value;
+          axis = name;
         }
       });
 
       const epsilon = 0.001;
-      switch (side) {
-        case "minX":
-          p.x = this._obstacleBounds.min.x - epsilon;
-          this.velocity.x = Math.min(0, this.velocity.x) * 0.2;
-          break;
-        case "maxX":
-          p.x = this._obstacleBounds.max.x + epsilon;
-          this.velocity.x = Math.max(0, this.velocity.x) * 0.2;
-          break;
-        case "minY":
-          p.y = Math.max(0.55, this._obstacleBounds.min.y - epsilon);
-          this.velocity.y = Math.min(0, this.velocity.y) * 0.2;
-          break;
-        case "maxY":
-          p.y = this._obstacleBounds.max.y + epsilon;
-          this.velocity.y = Math.max(0, this.velocity.y) * 0.2;
-          break;
-        case "minZ":
-          p.z = this._obstacleBounds.min.z - epsilon;
-          this.velocity.z = Math.min(0, this.velocity.z) * 0.2;
-          break;
-        case "maxZ":
-          p.z = this._obstacleBounds.max.z + epsilon;
-          this.velocity.z = Math.max(0, this.velocity.z) * 0.2;
-          break;
-        default:
-          break;
+      const p = this.group.position;
+      const droneCenter = this._droneBounds.getCenter(new THREE.Vector3());
+      const obstacleCenter = this._obstacleBounds.getCenter(
+        new THREE.Vector3(),
+      );
+
+      if (axis === "x") {
+        const dir = droneCenter.x >= obstacleCenter.x ? 1 : -1;
+        p.x += (minOverlap + epsilon) * dir;
+        this.velocity.x *= 0.2;
+      } else if (axis === "y") {
+        const dir = droneCenter.y >= obstacleCenter.y ? 1 : -1;
+        p.y = Math.max(0.55, p.y + (minOverlap + epsilon) * dir);
+        this.velocity.y *= 0.2;
+      } else {
+        const dir = droneCenter.z >= obstacleCenter.z ? 1 : -1;
+        p.z += (minOverlap + epsilon) * dir;
+        this.velocity.z *= 0.2;
       }
     }
   }
