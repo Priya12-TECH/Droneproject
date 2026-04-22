@@ -90,7 +90,7 @@ const ENVIRONMENTS = {
 
 // ── Globals ──────────────────────────────────────────────────────
 let _scene, _renderer, _ground, _grid, _sunLight, _ambientLight, _hemiLight;
-let _currentEnv = "day";
+let _currentEnv = "snow";
 let _envPanel = null;
 let _envOpen = false;
 
@@ -154,7 +154,7 @@ function initWorldEnvironment(scene, renderer) {
   });
 
   // Apply default environment
-  applyEnvironment("day");
+  applyEnvironment("snow");
 
   // Build UI switcher
   buildEnvUI();

@@ -72,6 +72,7 @@ class DroneSimulatorApp {
     this._telemetryLastSent = 0;
     this.telemetryInput = new THREE.Vector3();
     this.windVector = new THREE.Vector3();
+    this.windDirection = Math.random() * Math.PI * 2;
     this.commandMode = "manual";
     this.scenario = "normal";
 
@@ -1162,7 +1163,7 @@ class DroneSimulatorApp {
     this.audio.context = new AudioContextRef();
     const ctx = this.audio.context;
     const master = ctx.createGain();
-    master.gain.value = 0.18;
+    master.gain.value = 0.85;
     master.connect(ctx.destination);
 
     const osc = ctx.createOscillator();
@@ -1244,8 +1245,8 @@ class DroneSimulatorApp {
 
     const targetGain =
       altitude > 0.05
-        ? THREE.MathUtils.clamp(0.01 + speed * 0.005, 0.008, 0.09)
-        : 0.002;
+        ? THREE.MathUtils.clamp(0.04 + speed * 0.012, 0.035, 0.22)
+        : 0.012;
     const targetFreq = THREE.MathUtils.clamp(
       88 + speed * 16 + altitude * 2,
       85,
@@ -1397,6 +1398,12 @@ class DroneSimulatorApp {
   _setScenario(name) {
     this.scenario = name;
     this.drone.setAvoidanceEnabled(name === "obstacle");
+
+    if (name === "wind") {
+      this.windDirection = Math.random() * Math.PI * 2;
+    } else {
+      this.windVector.set(0, 0, 0);
+    }
 
     const label = name.replace("-", " ").toUpperCase();
     if (this.ui.scenarioBadge) this.ui.scenarioBadge.textContent = label;
@@ -1601,13 +1608,30 @@ class DroneSimulatorApp {
     };
 
     if (this.scenario === "wind") {
+      // Slowly drifting heading so the wind feels alive but keeps a clear direction.
+      this.windDirection += delta * 0.08;
+      const dirX = Math.cos(this.windDirection);
+      const dirZ = Math.sin(this.windDirection);
+
+      // Layered gusts: a slow swell plus a faster gust rider.
+      const gust =
+        Math.sin(this.elapsed * 0.55) * 2.4 +
+        Math.sin(this.elapsed * 1.7 + 1.3) * 1.3;
+      const magnitude = Math.max(0.6, 3.6 + gust);
+
+      // Turbulence: uncorrelated jitter on each axis.
+      const turbX = (Math.random() - 0.5) * 1.1;
+      const turbZ = (Math.random() - 0.5) * 1.1;
+      const turbY = (Math.random() - 0.5) * 0.7;
+
       this.windVector.set(
-        Math.sin(this.elapsed * 0.8) * 0.3 + (Math.random() - 0.5) * 0.04,
-        0,
-        Math.cos(this.elapsed * 0.55) * 0.22 + (Math.random() - 0.5) * 0.04,
+        dirX * magnitude + turbX,
+        turbY,
+        dirZ * magnitude + turbZ,
       );
       effects.windStrength = this.windVector.length();
-      this.drone.velocity.addScaledVector(this.windVector, delta * 2.2);
+      // Treat wind as an acceleration (m/s^2); integrates into velocity over delta.
+      this.drone.velocity.addScaledVector(this.windVector, delta);
     }
 
     if (this.scenario === "gps-denied") {
