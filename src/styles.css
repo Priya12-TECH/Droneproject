@@ -487,18 +487,43 @@ canvas {
   color: rgba(191, 217, 255, 0.9);
 }
 
+.sim-label--tight {
+  margin-bottom: 4px;
+}
+
+.sim-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: rgba(191, 217, 255, 0.72);
+  line-height: 1.4;
+}
+
+.sim-input-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 8px;
+  row-gap: 6px;
+  margin-top: 10px;
+}
+
 .sim-select,
-.sim-range {
+.sim-range,
+.sim-input {
   width: 100%;
 }
 
-.sim-select {
+.sim-select,
+.sim-input {
   height: 34px;
   border-radius: 8px;
   border: 1px solid rgba(125, 177, 255, 0.28);
   background: rgba(12, 23, 45, 0.8);
   color: rgba(232, 242, 255, 0.95);
   padding: 0 10px;
+}
+
+.sim-input {
+  font-size: 12px;
 }
 
 .sim-btn {
@@ -745,5 +770,9 @@ canvas {
 
   .camera-modes {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .sim-input-grid {
+    grid-template-columns: 1fr;
   }
 }

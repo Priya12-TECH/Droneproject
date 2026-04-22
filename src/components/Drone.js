@@ -2,9 +2,14 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 const ARM_LENGTH = 0.95;
-const MAX_ACCELERATION = 13.0;
-const MAX_SPEED = 11.0;
-const LINEAR_DAMPING = 0.88;
+const DEFAULT_FLIGHT_CONFIG = {
+  maxAcceleration: 13.0,
+  maxSpeed: 11.0,
+  thrustFactor: 1.0,
+  linearDamping: 0.88,
+  weightKg: 1.0,
+  payloadKg: 0.2,
+};
 
 /**
  * Reusable drone entity with mesh, propeller animation, and movement physics.
@@ -25,8 +30,54 @@ export class Drone {
     this._collisionPadding = 0.05;
     this._obstacleBounds = new THREE.Box3();
     this._droneBounds = new THREE.Box3();
+    this.flightConfig = { ...DEFAULT_FLIGHT_CONFIG };
 
     this._buildDroneGeometry();
+  }
+
+  setFlightConfig(config = {}) {
+    this.flightConfig = {
+      ...this.flightConfig,
+      ...config,
+    };
+
+    this.flightConfig.maxAcceleration = THREE.MathUtils.clamp(
+      Number(this.flightConfig.maxAcceleration) ||
+        DEFAULT_FLIGHT_CONFIG.maxAcceleration,
+      4,
+      28,
+    );
+    this.flightConfig.maxSpeed = THREE.MathUtils.clamp(
+      Number(this.flightConfig.maxSpeed) || DEFAULT_FLIGHT_CONFIG.maxSpeed,
+      3,
+      30,
+    );
+    this.flightConfig.thrustFactor = THREE.MathUtils.clamp(
+      Number(this.flightConfig.thrustFactor) ||
+        DEFAULT_FLIGHT_CONFIG.thrustFactor,
+      0.6,
+      1.6,
+    );
+    this.flightConfig.linearDamping = THREE.MathUtils.clamp(
+      Number(this.flightConfig.linearDamping) ||
+        DEFAULT_FLIGHT_CONFIG.linearDamping,
+      0.7,
+      0.98,
+    );
+    this.flightConfig.weightKg = THREE.MathUtils.clamp(
+      Number(this.flightConfig.weightKg) || DEFAULT_FLIGHT_CONFIG.weightKg,
+      0.1,
+      12,
+    );
+    this.flightConfig.payloadKg = THREE.MathUtils.clamp(
+      Number(this.flightConfig.payloadKg) || DEFAULT_FLIGHT_CONFIG.payloadKg,
+      0,
+      6,
+    );
+  }
+
+  getFlightConfig() {
+    return { ...this.flightConfig };
   }
 
   _buildDroneGeometry() {
@@ -271,7 +322,10 @@ export class Drone {
    * @param {THREE.Vector3} input Movement input vector
    */
   update(delta, input) {
-    this._targetAcceleration.copy(input).multiplyScalar(MAX_ACCELERATION);
+    const thrustBoost = this.flightConfig.thrustFactor;
+    this._targetAcceleration
+      .copy(input)
+      .multiplyScalar(this.flightConfig.maxAcceleration * thrustBoost);
 
     // Placeholder for future obstacle-avoidance force blending.
     if (this.avoidanceEnabled && this.obstacles.length) {
@@ -285,12 +339,12 @@ export class Drone {
     this.velocity.addScaledVector(this.acceleration, delta);
 
     // Clamp max speed.
-    if (this.velocity.length() > MAX_SPEED) {
-      this.velocity.setLength(MAX_SPEED);
+    if (this.velocity.length() > this.flightConfig.maxSpeed) {
+      this.velocity.setLength(this.flightConfig.maxSpeed);
     }
 
     // Exponential damping for stable feel at different frame rates.
-    const damping = Math.pow(LINEAR_DAMPING, delta * 60);
+    const damping = Math.pow(this.flightConfig.linearDamping, delta * 60);
     this.velocity.multiplyScalar(damping);
 
     this.group.position.addScaledVector(this.velocity, delta);
@@ -321,7 +375,7 @@ export class Drone {
     );
 
     // Propeller speed scales with current acceleration magnitude.
-    const spinSpeed = 20 + this.acceleration.length() * 1.4;
+    const spinSpeed = 18 + this.acceleration.length() * 1.35;
     for (let i = 0; i < this.propellers.length; i += 1) {
       const direction = i % 2 === 0 ? 1 : -1;
       this.propellers[i].rotation.y += spinSpeed * direction * delta;
@@ -337,7 +391,9 @@ export class Drone {
       const distance = away.length();
       if (distance > 0.0001 && distance < threshold) {
         const strength =
-          ((threshold - distance) / threshold) * MAX_ACCELERATION * 0.5;
+          ((threshold - distance) / threshold) *
+          this.flightConfig.maxAcceleration *
+          0.5;
         force.add(away.normalize().multiplyScalar(strength));
       }
     });
