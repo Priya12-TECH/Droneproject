@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { DroneVisual } from "./dronevisuals.js";
 
 const ARM_LENGTH = 0.95;
 const MAX_ACCELERATION = 13.0;
@@ -24,88 +25,15 @@ export class Drone {
     this.collisionsThisFrame = 0;
     this._collisionRadius = 0.62;
     this._obstacleBounds = new THREE.Box3();
+    this.visual = null;
 
     this._buildDroneGeometry();
   }
 
   _buildDroneGeometry() {
-    const body = new THREE.Mesh(
-      new THREE.BoxGeometry(1.3, 0.35, 1.0),
-      new THREE.MeshStandardMaterial({
-        color: 0x2a2f3b,
-        metalness: 0.55,
-        roughness: 0.35,
-      }),
-    );
-    body.castShadow = true;
-    body.receiveShadow = true;
-    this.group.add(body);
-
-    const armGeometry = new THREE.CylinderGeometry(
-      0.065,
-      0.065,
-      ARM_LENGTH * 2,
-      16,
-    );
-    const armMaterial = new THREE.MeshStandardMaterial({
-      color: 0x2a2f3b,
-      metalness: 0.6,
-      roughness: 0.25,
-    });
-
-    const arm1 = new THREE.Mesh(armGeometry, armMaterial);
-    arm1.rotation.z = Math.PI * 0.5;
-    arm1.rotation.y = Math.PI * 0.25;
-    arm1.castShadow = true;
-    this.group.add(arm1);
-
-    const arm2 = new THREE.Mesh(armGeometry, armMaterial);
-    arm2.rotation.z = Math.PI * 0.5;
-    arm2.rotation.y = -Math.PI * 0.25;
-    arm2.castShadow = true;
-    this.group.add(arm2);
-
-    const motorMaterial = new THREE.MeshStandardMaterial({
-      color: 0x2a2f3b,
-      metalness: 0.4,
-      roughness: 0.4,
-    });
-    const propMaterial = new THREE.MeshStandardMaterial({
-      color: 0x2a2f3b,
-      metalness: 0.2,
-      roughness: 0.7,
-    });
-
-    const rotorPoints = [
-      new THREE.Vector3(ARM_LENGTH, 0.08, ARM_LENGTH),
-      new THREE.Vector3(-ARM_LENGTH, 0.08, ARM_LENGTH),
-      new THREE.Vector3(ARM_LENGTH, 0.08, -ARM_LENGTH),
-      new THREE.Vector3(-ARM_LENGTH, 0.08, -ARM_LENGTH),
-    ];
-
-    rotorPoints.forEach((position) => {
-      const motor = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.12, 0.12, 0.14, 20),
-        motorMaterial,
-      );
-      motor.position.copy(position);
-      motor.castShadow = true;
-      this.group.add(motor);
-
-      const propeller = new THREE.Group();
-      propeller.position.copy(position).add(new THREE.Vector3(0, 0.09, 0));
-
-      const bladeGeometry = new THREE.BoxGeometry(0.65, 0.018, 0.08);
-      const blade1 = new THREE.Mesh(bladeGeometry, propMaterial);
-      blade1.castShadow = true;
-
-      const blade2 = blade1.clone();
-      blade2.rotation.y = Math.PI * 0.5;
-
-      propeller.add(blade1, blade2);
-      this.group.add(propeller);
-      this.propellers.push(propeller);
-    });
+    this.visual = new DroneVisual({ baseScale: 1.0 });
+    this.group.add(this.visual.group);
+    this.propellers = this.visual.propellers;
   }
 
   /**
@@ -194,11 +122,9 @@ export class Drone {
     );
 
     // Propeller speed scales with current acceleration magnitude.
-    const spinSpeed = 20 + this.acceleration.length() * 1.4;
-    for (let i = 0; i < this.propellers.length; i += 1) {
-      const direction = i % 2 === 0 ? 1 : -1;
-      this.propellers[i].rotation.y += spinSpeed * direction * delta;
-    }
+    const throttle = THREE.MathUtils.clamp(this.acceleration.length() / MAX_ACCELERATION, 0, 1);
+    this.visual?.setThrottle(throttle);
+    this.visual?.update(delta);
   }
 
   _computeAvoidanceForce() {
