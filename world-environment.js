@@ -7,20 +7,19 @@ import * as THREE from "three";
 // ═══════════════════════════════════════════════════════════════
 
 const ENVIRONMENTS = {
-
   // ── 1. Bright Day ─────────────────────────────────────────────
   day: {
-    name: 'Daytime',
+    name: "Day",
     fogColor: 0xc9e8ff,
     fogNear: 80,
     fogFar: 400,
-    bgColor: 0x87ceeb,           // sky blue
+    bgColor: 0x87ceeb, // sky blue
     ambientColor: 0xffffff,
     ambientIntensity: 0.7,
     sunColor: 0xfff5e0,
     sunIntensity: 1.4,
     sunPosition: [100, 200, 100],
-    groundColor: 0x4a7c3f,       // grass green
+    groundColor: 0x4a7c3f, // grass green
     gridColor: 0x3a6b30,
     gridCenterColor: 0x2d5426,
     hemiSkyColor: 0x87ceeb,
@@ -28,49 +27,9 @@ const ENVIRONMENTS = {
     hemiIntensity: 0.5,
   },
 
-  // ── 2. Golden Hour ────────────────────────────────────────────
-  sunset: {
-    name: 'Sunset',
-    fogColor: 0xff9966,
-    fogNear: 60,
-    fogFar: 300,
-    bgColor: 0xff7733,
-    ambientColor: 0xff9955,
-    ambientIntensity: 0.6,
-    sunColor: 0xff6600,
-    sunIntensity: 1.2,
-    sunPosition: [200, 40, -100],
-    groundColor: 0x8b5e3c,
-    gridColor: 0x7a4e2d,
-    gridCenterColor: 0x5c3a20,
-    hemiSkyColor: 0xff7733,
-    hemiGroundColor: 0x8b5e3c,
-    hemiIntensity: 0.4,
-  },
-
-  // ── 3. Clean White Studio ─────────────────────────────────────
-  studio: {
-    name: 'Studio',
-    fogColor: 0xffffff,
-    fogNear: 100,
-    fogFar: 500,
-    bgColor: 0xf0f4f8,
-    ambientColor: 0xffffff,
-    ambientIntensity: 1.0,
-    sunColor: 0xffffff,
-    sunIntensity: 0.8,
-    sunPosition: [50, 200, 50],
-    groundColor: 0xe8ecf0,
-    gridColor: 0xc0c8d0,
-    gridCenterColor: 0x9aa5b0,
-    hemiSkyColor: 0xffffff,
-    hemiGroundColor: 0xdddddd,
-    hemiIntensity: 0.6,
-  },
-
-  // ── 4. Desert / Arid ─────────────────────────────────────────
+  // ── 2. Desert / Arid ─────────────────────────────────────────
   desert: {
-    name: 'Desert',
+    name: "Desert",
     fogColor: 0xe8c88a,
     fogNear: 70,
     fogFar: 350,
@@ -88,9 +47,9 @@ const ENVIRONMENTS = {
     hemiIntensity: 0.5,
   },
 
-  // ── 5. Snowy Arctic ───────────────────────────────────────────
+  // ── 3. Snowy Arctic ───────────────────────────────────────────
   snow: {
-    name: 'Arctic',
+    name: "Arctic",
     fogColor: 0xddeeff,
     fogNear: 50,
     fogFar: 250,
@@ -108,9 +67,9 @@ const ENVIRONMENTS = {
     hemiIntensity: 0.7,
   },
 
-  // ── 6. Night / City ───────────────────────────────────────────
+  // ── 4. Night / City ───────────────────────────────────────────
   night: {
-    name: 'Night',
+    name: "Night",
     fogColor: 0x050a14,
     fogNear: 40,
     fogFar: 200,
@@ -131,14 +90,16 @@ const ENVIRONMENTS = {
 
 // ── Globals ──────────────────────────────────────────────────────
 let _scene, _renderer, _ground, _grid, _sunLight, _ambientLight, _hemiLight;
-let _currentEnv = 'day';
+let _currentEnv = "day";
+let _envPanel = null;
+let _envOpen = false;
 
 // ═══════════════════════════════════════════════════════════════
 //  INIT — call once after you create your scene
 //  Pass in your Three.js scene and renderer
 // ═══════════════════════════════════════════════════════════════
 function initWorldEnvironment(scene, renderer) {
-  _scene    = scene;
+  _scene = scene;
   _renderer = renderer;
 
   // Enable shadows on renderer
@@ -173,27 +134,27 @@ function initWorldEnvironment(scene, renderer) {
   _sunLight = new THREE.DirectionalLight(0xfff5e0, 1.4);
   _sunLight.position.set(100, 200, 100);
   _sunLight.castShadow = true;
-  _sunLight.shadow.mapSize.width  = 2048;
+  _sunLight.shadow.mapSize.width = 2048;
   _sunLight.shadow.mapSize.height = 2048;
-  _sunLight.shadow.camera.near   = 0.5;
-  _sunLight.shadow.camera.far    = 600;
-  _sunLight.shadow.camera.left   = -150;
-  _sunLight.shadow.camera.right  =  150;
-  _sunLight.shadow.camera.top    =  150;
+  _sunLight.shadow.camera.near = 0.5;
+  _sunLight.shadow.camera.far = 600;
+  _sunLight.shadow.camera.left = -150;
+  _sunLight.shadow.camera.right = 150;
+  _sunLight.shadow.camera.top = 150;
   _sunLight.shadow.camera.bottom = -150;
   _sunLight.shadow.bias = -0.0005;
   scene.add(_sunLight);
 
   // Make existing obstacles cast + receive shadows
-  scene.traverse(obj => {
+  scene.traverse((obj) => {
     if (obj.isMesh && obj !== _ground) {
-      obj.castShadow    = true;
+      obj.castShadow = true;
       obj.receiveShadow = true;
     }
   });
 
   // Apply default environment
-  applyEnvironment('day');
+  applyEnvironment("day");
 
   // Build UI switcher
   buildEnvUI();
@@ -204,7 +165,7 @@ function initWorldEnvironment(scene, renderer) {
 //  e.g. switchEnvironment('sunset')
 // ═══════════════════════════════════════════════════════════════
 function switchEnvironment(envKey) {
-  if (!ENVIRONMENTS[envKey]) return console.warn('Unknown env:', envKey);
+  if (!ENVIRONMENTS[envKey]) return console.warn("Unknown env:", envKey);
   _currentEnv = envKey;
   applyEnvironment(envKey);
   updateEnvUI(envKey);
@@ -237,7 +198,7 @@ function applyEnvironment(envKey) {
 
   // Renderer exposure tweak for night
   if (_renderer) {
-    _renderer.toneMappingExposure = envKey === 'night' ? 2.0 : 1.0;
+    _renderer.toneMappingExposure = envKey === "night" ? 2.0 : 1.0;
   }
 }
 
@@ -246,82 +207,92 @@ function applyEnvironment(envKey) {
 // ═══════════════════════════════════════════════════════════════
 function buildEnvUI() {
   // Remove existing if any
-  const old = document.getElementById('env-switcher');
+  const old = document.getElementById("env-switcher");
   if (old) old.remove();
 
-  const panel = document.createElement('div');
-  panel.id = 'env-switcher';
-  panel.style.cssText = `
-    position: fixed;
-    top: 16px;
-    right: 16px;
-    z-index: 1000;
-    background: rgba(5, 10, 20, 0.85);
-    border: 1px solid rgba(56, 189, 248, 0.25);
-    border-radius: 10px;
-    padding: 10px 12px;
-    font-family: 'Segoe UI', sans-serif;
-    backdrop-filter: blur(8px);
+  const panel = document.createElement("div");
+  panel.id = "env-switcher";
+  panel.className = "sim-panel environment-panel environment-panel--collapsed";
+
+  const header = document.createElement("div");
+  header.className = "sim-panel__header";
+  header.innerHTML = `
+    <div>
+      <h2>Environment</h2>
+      <p>Visual world profile</p>
+    </div>
+    <span class="sim-panel__badge">ACTIVE</span>
   `;
+  panel.appendChild(header);
 
-  const label = document.createElement('div');
-  label.style.cssText = 'font-size:10px; color:#4b9fd4; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:8px; font-weight:600;';
-  label.textContent = 'Environment';
-  panel.appendChild(label);
+  const section = document.createElement("section");
+  section.className = "sim-section";
 
-  const btnRow = document.createElement('div');
-  btnRow.style.cssText = 'display:flex; flex-wrap:wrap; gap:5px; max-width:220px;';
+  const label = document.createElement("div");
+  label.className = "sim-label";
+  label.textContent = "Select Preset";
+  section.appendChild(label);
+
+  const btnRow = document.createElement("div");
+  btnRow.className = "environment-grid";
 
   Object.entries(ENVIRONMENTS).forEach(([key, env]) => {
-    const btn = document.createElement('button');
-    btn.id = 'env-btn-' + key;
+    const btn = document.createElement("button");
+    btn.id = "env-btn-" + key;
     btn.textContent = env.name;
+    btn.type = "button";
     btn.onclick = () => switchEnvironment(key);
-    btn.style.cssText = `
-      font-size: 11px;
-      padding: 5px 10px;
-      border-radius: 5px;
-      border: 1px solid rgba(56,189,248,0.2);
-      background: rgba(255,255,255,0.05);
-      color: #a0c4d8;
-      cursor: pointer;
-      transition: all 0.15s;
-      font-family: inherit;
-    `;
-    btn.onmouseenter = () => {
-      if (btn.id !== 'env-btn-' + _currentEnv)
-        btn.style.background = 'rgba(56,189,248,0.1)';
-    };
-    btn.onmouseleave = () => {
-      if (btn.id !== 'env-btn-' + _currentEnv)
-        btn.style.background = 'rgba(255,255,255,0.05)';
-    };
+    btn.className = "sim-btn environment-btn";
     btnRow.appendChild(btn);
   });
 
-  panel.appendChild(btnRow);
+  section.appendChild(btnRow);
+  panel.appendChild(section);
+
   document.body.appendChild(panel);
-  updateEnvUI('day');
+  _envPanel = panel;
+  _envOpen = false;
+  setEnvironmentPanelOpen(false);
+  updateEnvUI("day");
 }
 
 function updateEnvUI(activeKey) {
-  Object.keys(ENVIRONMENTS).forEach(key => {
-    const btn = document.getElementById('env-btn-' + key);
+  Object.keys(ENVIRONMENTS).forEach((key) => {
+    const btn = document.getElementById("env-btn-" + key);
     if (!btn) return;
     if (key === activeKey) {
-      btn.style.background = 'rgba(56,189,248,0.25)';
-      btn.style.color = '#38bdf8';
-      btn.style.borderColor = 'rgba(56,189,248,0.6)';
+      btn.classList.add("environment-btn--active");
     } else {
-      btn.style.background = 'rgba(255,255,255,0.05)';
-      btn.style.color = '#a0c4d8';
-      btn.style.borderColor = 'rgba(56,189,248,0.2)';
+      btn.classList.remove("environment-btn--active");
     }
   });
+}
+
+function setEnvironmentPanelOpen(open) {
+  _envOpen = Boolean(open);
+  if (_envPanel) {
+    _envPanel.classList.toggle("environment-panel--collapsed", !_envOpen);
+  }
+  return _envOpen;
+}
+
+function toggleEnvironmentPanel() {
+  return setEnvironmentPanelOpen(!_envOpen);
+}
+
+function isEnvironmentPanelOpen() {
+  return _envOpen;
 }
 
 // ═══════════════════════════════════════════════════════════════
 //  EXPORT (if using modules)
 // ═══════════════════════════════════════════════════════════════
 // ES module export (used by src/main.js)
-export { initWorldEnvironment, switchEnvironment, ENVIRONMENTS };
+export {
+  initWorldEnvironment,
+  switchEnvironment,
+  ENVIRONMENTS,
+  setEnvironmentPanelOpen,
+  toggleEnvironmentPanel,
+  isEnvironmentPanelOpen,
+};
