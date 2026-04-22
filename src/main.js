@@ -4,7 +4,10 @@ import {
   createOrbitControls,
   KeyboardFlightController,
 } from "./utils/controls.js";
-import { initWorldEnvironment } from "../world-environment.js";
+import {
+  initWorldEnvironment,
+  toggleEnvironmentPanel,
+} from "../world-environment.js";
 import "./styles.css";
 
 class DroneSimulatorApp {
@@ -25,9 +28,14 @@ class DroneSimulatorApp {
     this.leftPanelOpen = true;
     this.rightPanelOpen = true;
     this.cameraDockOpen = true;
+    this.environmentPanelOpen = false;
     this.viewportLocked = false;
     this.cameraViewMode = "auto";
     this.lastAutoCameraDirection = "forward";
+    this.lowBatteryWarned = false;
+    this.batteryEmergencyActive = false;
+    this.batteryEmergencyLanded = false;
+    this._noticeTimer = null;
 
     this.ui = {
       panel: null,
@@ -36,6 +44,7 @@ class DroneSimulatorApp {
       toggleTelemetryBtn: null,
       toggleControlBtn: null,
       toggleCameraBtn: null,
+      toggleEnvironmentBtn: null,
       viewportLockBtn: null,
       viewportResetBtn: null,
       cameraDock: null,
@@ -54,6 +63,8 @@ class DroneSimulatorApp {
       clearMissionBtn: null,
       scenarioBadge: null,
       introOverlay: null,
+      notice: null,
+      noticeText: null,
     };
 
     this.sideCamera = null;
@@ -143,6 +154,7 @@ class DroneSimulatorApp {
     this._setupScene();
     this._setupEvents();
     this._setupViewportToolbar();
+    this._setupSystemNotice();
     this._setupHud();
     this._setupControlPanel();
     this._setupCameraDock();
@@ -282,6 +294,7 @@ class DroneSimulatorApp {
       <button type="button" class="toolbar-btn toolbar-btn--active" data-action="telemetry">Telemetry</button>
       <button type="button" class="toolbar-btn toolbar-btn--active" data-action="controls">Controls</button>
       <button type="button" class="toolbar-btn toolbar-btn--active" data-action="camera">Camera</button>
+      <button type="button" class="toolbar-btn" data-action="environment">Environment</button>
       <button type="button" class="toolbar-btn" data-action="lock">Lock Viewport</button>
       <button type="button" class="toolbar-btn" data-action="reset">Reset View</button>
     `.trim();
@@ -296,6 +309,9 @@ class DroneSimulatorApp {
       '[data-action="controls"]',
     );
     this.ui.toggleCameraBtn = toolbar.querySelector('[data-action="camera"]');
+    this.ui.toggleEnvironmentBtn = toolbar.querySelector(
+      '[data-action="environment"]',
+    );
     this.ui.viewportLockBtn = toolbar.querySelector('[data-action="lock"]');
     this.ui.viewportResetBtn = toolbar.querySelector('[data-action="reset"]');
 
@@ -308,12 +324,50 @@ class DroneSimulatorApp {
     this.ui.toggleCameraBtn.addEventListener("click", () =>
       this._toggleCameraDock(),
     );
+    if (this.ui.toggleEnvironmentBtn) {
+      this.ui.toggleEnvironmentBtn.addEventListener("click", () =>
+        this._toggleEnvironmentPanel(),
+      );
+    }
     this.ui.viewportLockBtn.addEventListener("click", () =>
       this._toggleViewportLock(),
     );
     this.ui.viewportResetBtn.addEventListener("click", () =>
       this._resetViewport(),
     );
+  }
+
+  _setupSystemNotice() {
+    const notice = document.createElement("div");
+    notice.className = "sim-notice";
+    notice.innerHTML = `<span class="sim-notice__text"></span>`;
+    document.body.appendChild(notice);
+
+    this.ui.notice = notice;
+    this.ui.noticeText = notice.querySelector(".sim-notice__text");
+  }
+
+  _showSystemNotice(message, tone = "info", durationMs = 3000) {
+    if (!this.ui.notice || !this.ui.noticeText) return;
+
+    this.ui.noticeText.textContent = message;
+    this.ui.notice.classList.remove(
+      "sim-notice--warn",
+      "sim-notice--danger",
+      "sim-notice--show",
+    );
+    if (tone === "warn") this.ui.notice.classList.add("sim-notice--warn");
+    if (tone === "danger") this.ui.notice.classList.add("sim-notice--danger");
+    this.ui.notice.classList.add("sim-notice--show");
+
+    if (this._noticeTimer) {
+      window.clearTimeout(this._noticeTimer);
+    }
+    this._noticeTimer = window.setTimeout(() => {
+      if (this.ui.notice) {
+        this.ui.notice.classList.remove("sim-notice--show");
+      }
+    }, durationMs);
   }
 
   _toggleTelemetryPanel() {
@@ -357,6 +411,16 @@ class DroneSimulatorApp {
       this.ui.toggleCameraBtn.classList.toggle(
         "toolbar-btn--active",
         this.cameraDockOpen,
+      );
+    }
+  }
+
+  _toggleEnvironmentPanel() {
+    this.environmentPanelOpen = toggleEnvironmentPanel();
+    if (this.ui.toggleEnvironmentBtn) {
+      this.ui.toggleEnvironmentBtn.classList.toggle(
+        "toolbar-btn--active",
+        this.environmentPanelOpen,
       );
     }
   }
@@ -1340,7 +1404,42 @@ class DroneSimulatorApp {
       98,
     );
 
-    if (effects.motorFailureActive) {
+    if (!this.lowBatteryWarned && this.telemetry.battery <= 10) {
+      this.lowBatteryWarned = true;
+      this._showSystemNotice(
+        "Battery low (10%). Return to base immediately.",
+        "warn",
+        4200,
+      );
+      this._logMavlink(
+        "STATUSTEXT",
+        "LOW_BATTERY 10%: return-to-home recommended",
+      );
+    }
+
+    if (!this.batteryEmergencyActive && this.telemetry.battery <= 0) {
+      this.batteryEmergencyActive = true;
+      this.commandMode = "emergency-land";
+      this.telemetryInput.set(0, 0, 0);
+      this.missionActive = false;
+      this.missionPaused = false;
+      this._refreshMissionUi();
+
+      this._showSystemNotice(
+        "Battery depleted (0%). Emergency landing initiated.",
+        "danger",
+        5000,
+      );
+      this._logMavlink(
+        "STATUSTEXT",
+        "BATTERY_DEPLETED 0%: emergency landing (failsafe)",
+      );
+      this._logMavlink("COMMAND_LONG", "NAV_LAND reason=BATTERY_FAILSAFE");
+    }
+
+    if (this.batteryEmergencyActive) {
+      this.telemetry.status = altitude > 0.05 ? "EMERG_LAND" : "BATT_EMPTY";
+    } else if (effects.motorFailureActive) {
       this.telemetry.status = "MOTOR_FAIL";
     } else if (this.missionActive && !this.missionPaused) {
       this.telemetry.status = "AUTO";
@@ -1454,7 +1553,7 @@ class DroneSimulatorApp {
     const keyboardInput = this.keyboard.getInputVector();
 
     // Keyboard should always be able to take control back from LAND/HOVER modes.
-    if (keyboardInput.lengthSq() > 0) {
+    if (keyboardInput.lengthSq() > 0 && !this.batteryEmergencyActive) {
       this.commandMode = "manual";
       this.telemetryInput.set(0, 0, 0);
       if (this.missionActive) {
@@ -1473,6 +1572,28 @@ class DroneSimulatorApp {
     if (this.commandMode === "hover") {
       input.set(0, 0, 0);
       this.drone.velocity.multiplyScalar(Math.pow(0.9, delta * 60));
+    } else if (this.commandMode === "emergency-land") {
+      input.set(0, -2.2, 0);
+      this.drone.velocity.x *= Math.pow(0.72, delta * 60);
+      this.drone.velocity.z *= Math.pow(0.72, delta * 60);
+      this.drone.velocity.y = Math.min(this.drone.velocity.y, -7.0);
+
+      if (altitude <= 0.03) {
+        this.commandMode = "hover";
+        this.telemetryInput.set(0, 0, 0);
+        if (!this.batteryEmergencyLanded) {
+          this.batteryEmergencyLanded = true;
+          this._showSystemNotice(
+            "Emergency landing complete. Battery exhausted.",
+            "danger",
+            4500,
+          );
+          this._logMavlink(
+            "STATUSTEXT",
+            "LAND_COMPLETE reason=BATTERY_FAILSAFE",
+          );
+        }
+      }
     } else if (this.commandMode === "land") {
       input.set(0, -0.65, 0);
       this.drone.velocity.x *= Math.pow(0.85, delta * 60);
