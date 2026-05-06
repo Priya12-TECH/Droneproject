@@ -382,6 +382,54 @@ canvas {
   box-shadow: 0 0 0 1px rgba(85, 227, 255, 0.25) inset;
 }
 
+.sim-notice {
+  position: fixed;
+  z-index: 14;
+  left: 50%;
+  top: 58px;
+  transform: translate(-50%, -8px);
+  opacity: 0;
+  pointer-events: none;
+  min-width: 320px;
+  max-width: min(620px, calc(100vw - 24px));
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(125, 177, 255, 0.28);
+  background: rgba(14, 30, 56, 0.92);
+  color: rgba(232, 242, 255, 0.95);
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(6px);
+  transition:
+    transform 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.sim-notice--show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.sim-notice--warn {
+  border-color: rgba(255, 199, 84, 0.62);
+  background: rgba(67, 46, 16, 0.92);
+  color: rgba(255, 236, 183, 0.98);
+}
+
+.sim-notice--danger {
+  border-color: rgba(255, 128, 128, 0.68);
+  background: rgba(82, 22, 22, 0.93);
+  color: rgba(255, 218, 218, 0.98);
+}
+
+.sim-notice__text {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 .sim-panel__header {
   display: flex;
   justify-content: space-between;
@@ -439,18 +487,43 @@ canvas {
   color: rgba(191, 217, 255, 0.9);
 }
 
+.sim-label--tight {
+  margin-bottom: 4px;
+}
+
+.sim-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: rgba(191, 217, 255, 0.72);
+  line-height: 1.4;
+}
+
+.sim-input-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 8px;
+  row-gap: 6px;
+  margin-top: 10px;
+}
+
 .sim-select,
-.sim-range {
+.sim-range,
+.sim-input {
   width: 100%;
 }
 
-.sim-select {
+.sim-select,
+.sim-input {
   height: 34px;
   border-radius: 8px;
   border: 1px solid rgba(125, 177, 255, 0.28);
   background: rgba(12, 23, 45, 0.8);
   color: rgba(232, 242, 255, 0.95);
   padding: 0 10px;
+}
+
+.sim-input {
+  font-size: 12px;
 }
 
 .sim-btn {
@@ -511,6 +584,36 @@ canvas {
   transition:
     transform 0.25s ease,
     opacity 0.25s ease;
+}
+
+.environment-panel {
+  left: 12px;
+  right: auto;
+  top: auto;
+  bottom: 12px;
+  padding: 10px;
+}
+
+.environment-panel--collapsed {
+  transform: translateX(calc(-100% - 16px));
+  opacity: 0.2;
+  pointer-events: none;
+}
+
+.environment-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.environment-btn {
+  flex: unset;
+}
+
+.environment-btn--active {
+  border-color: rgba(84, 229, 255, 0.65);
+  background: rgba(23, 83, 107, 0.85);
+  color: #8fd8ff;
 }
 
 .camera-dock--collapsed {
@@ -646,13 +749,30 @@ canvas {
     justify-content: flex-start;
   }
 
+  .sim-notice {
+    top: 52px;
+    min-width: 0;
+    width: calc(100vw - 20px);
+  }
+
   .camera-dock {
     left: 12px;
     right: 12px;
     width: auto;
   }
 
+  .environment-panel {
+    left: 12px;
+    right: 12px;
+    width: auto;
+    bottom: 12px;
+  }
+
   .camera-modes {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .sim-input-grid {
+    grid-template-columns: 1fr;
   }
 }

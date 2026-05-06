@@ -1,11 +1,71 @@
 import * as THREE from "three";
 import { Drone } from "./components/Drone.js";
+import PIDTuning       from '../PIDTuning.js';
+import DroneController from '../DroneController.js';
 import {
   createOrbitControls,
   KeyboardFlightController,
 } from "./utils/controls.js";
-import { initWorldEnvironment } from "../world-environment.js";
+import {
+  initWorldEnvironment,
+  toggleEnvironmentPanel,
+} from "../world-environment.js";
 import "./styles.css";
+
+
+
+const DRONE_PROFILES = {
+  m350: {
+    key: "m350",
+    name: "DJI Matrice 350 RTK",
+    weightKg: 3.8,
+    batteryMah: 11700,
+    maxSpeed: 13,
+    maxAcceleration: 9.2,
+    thrustFactor: 1.02,
+    linearDamping: 0.91,
+    payloadKg: 2.7,
+    estimatedFlightTimeMin: 46,
+  },
+  m3e: {
+    key: "m3e",
+    name: "DJI Mavic 3 Enterprise",
+    weightKg: 0.95,
+    batteryMah: 5000,
+    maxSpeed: 15,
+    maxAcceleration: 13.5,
+    thrustFactor: 1.0,
+    linearDamping: 0.88,
+    payloadKg: 0.35,
+    estimatedFlightTimeMin: 42,
+  },
+  px4_450: {
+    key: "px4_450",
+    name: "PX4 F450 (Research Build)",
+    weightKg: 1.35,
+    batteryMah: 5200,
+    maxSpeed: 11,
+    maxAcceleration: 12,
+    thrustFactor: 0.96,
+    linearDamping: 0.885,
+    payloadKg: 0.7,
+    estimatedFlightTimeMin: 18,
+  },
+  nano: {
+    key: "nano",
+    name: "Nano Quad (Indoor)",
+    weightKg: 0.25,
+    batteryMah: 1500,
+    maxSpeed: 7.5,
+    maxAcceleration: 16,
+    thrustFactor: 1.08,
+    linearDamping: 0.86,
+    payloadKg: 0.05,
+    estimatedFlightTimeMin: 9,
+  },
+};
+
+const DEFAULT_PROFILE_KEY = "m3e";
 
 class DroneSimulatorApp {
   constructor(container) {
@@ -16,6 +76,7 @@ class DroneSimulatorApp {
     this._telemetryLastSent = 0;
     this.telemetryInput = new THREE.Vector3();
     this.windVector = new THREE.Vector3();
+    this.windDirection = Math.random() * Math.PI * 2;
     this.commandMode = "manual";
     this.scenario = "normal";
 
@@ -25,9 +86,16 @@ class DroneSimulatorApp {
     this.leftPanelOpen = true;
     this.rightPanelOpen = true;
     this.cameraDockOpen = true;
+    this.environmentPanelOpen = false;
     this.viewportLocked = false;
     this.cameraViewMode = "auto";
     this.lastAutoCameraDirection = "forward";
+    this.activeDroneProfileKey = DEFAULT_PROFILE_KEY;
+    this.currentDroneProfile = { ...DRONE_PROFILES[DEFAULT_PROFILE_KEY] };
+    this.lowBatteryWarned = false;
+    this.batteryEmergencyActive = false;
+    this.batteryEmergencyLanded = false;
+    this._noticeTimer = null;
 
     this.ui = {
       panel: null,
@@ -36,6 +104,7 @@ class DroneSimulatorApp {
       toggleTelemetryBtn: null,
       toggleControlBtn: null,
       toggleCameraBtn: null,
+      toggleEnvironmentBtn: null,
       viewportLockBtn: null,
       viewportResetBtn: null,
       cameraDock: null,
@@ -45,6 +114,17 @@ class DroneSimulatorApp {
       sideCameraModeLabel: null,
       sideCameraModeButtons: [],
       scenarioSelect: null,
+      droneModelSelect: null,
+      droneWeightInput: null,
+      droneBatteryInput: null,
+      droneMaxSpeedInput: null,
+      droneMaxAccelInput: null,
+      droneThrustInput: null,
+      droneDampingInput: null,
+      dronePayloadInput: null,
+      droneFlightTimeChip: null,
+      droneApplyBtn: null,
+      droneResetBtn: null,
       missionStatus: null,
       missionSpeed: null,
       missionSpeedValue: null,
@@ -54,6 +134,8 @@ class DroneSimulatorApp {
       clearMissionBtn: null,
       scenarioBadge: null,
       introOverlay: null,
+      notice: null,
+      noticeText: null,
     };
 
     this.sideCamera = null;
@@ -135,14 +217,22 @@ class DroneSimulatorApp {
     this.keyboard = new KeyboardFlightController();
 
     this.drone = new Drone();
+    this.drone.setFlightConfig(this.currentDroneProfile);
     this.drone.group.position.set(0, 2, 0);
     this.scene.add(this.drone.group);
+    this.droneController = new DroneController();
+    this.droneController.arm();
+    this.pidPanel = new PIDTuning({
+  onPIDChange: (axis, p, i, d) => this.droneController.setPID(axis, p, i, d)
+});
+   document.body.appendChild(this.pidPanel.el);
 
     this.followOffset = new THREE.Vector3(8, 5, 9);
 
     this._setupScene();
     this._setupEvents();
     this._setupViewportToolbar();
+    this._setupSystemNotice();
     this._setupHud();
     this._setupControlPanel();
     this._setupCameraDock();
@@ -282,6 +372,7 @@ class DroneSimulatorApp {
       <button type="button" class="toolbar-btn toolbar-btn--active" data-action="telemetry">Telemetry</button>
       <button type="button" class="toolbar-btn toolbar-btn--active" data-action="controls">Controls</button>
       <button type="button" class="toolbar-btn toolbar-btn--active" data-action="camera">Camera</button>
+      <button type="button" class="toolbar-btn" data-action="environment">Environment</button>
       <button type="button" class="toolbar-btn" data-action="lock">Lock Viewport</button>
       <button type="button" class="toolbar-btn" data-action="reset">Reset View</button>
     `.trim();
@@ -296,6 +387,9 @@ class DroneSimulatorApp {
       '[data-action="controls"]',
     );
     this.ui.toggleCameraBtn = toolbar.querySelector('[data-action="camera"]');
+    this.ui.toggleEnvironmentBtn = toolbar.querySelector(
+      '[data-action="environment"]',
+    );
     this.ui.viewportLockBtn = toolbar.querySelector('[data-action="lock"]');
     this.ui.viewportResetBtn = toolbar.querySelector('[data-action="reset"]');
 
@@ -308,12 +402,50 @@ class DroneSimulatorApp {
     this.ui.toggleCameraBtn.addEventListener("click", () =>
       this._toggleCameraDock(),
     );
+    if (this.ui.toggleEnvironmentBtn) {
+      this.ui.toggleEnvironmentBtn.addEventListener("click", () =>
+        this._toggleEnvironmentPanel(),
+      );
+    }
     this.ui.viewportLockBtn.addEventListener("click", () =>
       this._toggleViewportLock(),
     );
     this.ui.viewportResetBtn.addEventListener("click", () =>
       this._resetViewport(),
     );
+  }
+
+  _setupSystemNotice() {
+    const notice = document.createElement("div");
+    notice.className = "sim-notice";
+    notice.innerHTML = `<span class="sim-notice__text"></span>`;
+    document.body.appendChild(notice);
+
+    this.ui.notice = notice;
+    this.ui.noticeText = notice.querySelector(".sim-notice__text");
+  }
+
+  _showSystemNotice(message, tone = "info", durationMs = 3000) {
+    if (!this.ui.notice || !this.ui.noticeText) return;
+
+    this.ui.noticeText.textContent = message;
+    this.ui.notice.classList.remove(
+      "sim-notice--warn",
+      "sim-notice--danger",
+      "sim-notice--show",
+    );
+    if (tone === "warn") this.ui.notice.classList.add("sim-notice--warn");
+    if (tone === "danger") this.ui.notice.classList.add("sim-notice--danger");
+    this.ui.notice.classList.add("sim-notice--show");
+
+    if (this._noticeTimer) {
+      window.clearTimeout(this._noticeTimer);
+    }
+    this._noticeTimer = window.setTimeout(() => {
+      if (this.ui.notice) {
+        this.ui.notice.classList.remove("sim-notice--show");
+      }
+    }, durationMs);
   }
 
   _toggleTelemetryPanel() {
@@ -357,6 +489,16 @@ class DroneSimulatorApp {
       this.ui.toggleCameraBtn.classList.toggle(
         "toolbar-btn--active",
         this.cameraDockOpen,
+      );
+    }
+  }
+
+  _toggleEnvironmentPanel() {
+    this.environmentPanelOpen = toggleEnvironmentPanel();
+    if (this.ui.toggleEnvironmentBtn) {
+      this.ui.toggleEnvironmentBtn.classList.toggle(
+        "toolbar-btn--active",
+        this.environmentPanelOpen,
       );
     }
   }
@@ -506,6 +648,13 @@ class DroneSimulatorApp {
   }
 
   _setupControlPanel() {
+    const profileOptions = Object.values(DRONE_PROFILES)
+      .map(
+        (profile) =>
+          `<option value="${profile.key}">${profile.name}</option>`,
+      )
+      .join("");
+
     const panel = document.createElement("aside");
     panel.className = "sim-panel";
     panel.innerHTML = `
@@ -516,6 +665,59 @@ class DroneSimulatorApp {
         </div>
         <span class="sim-panel__badge" id="scenario-badge">NORMAL</span>
       </div>
+
+      <section class="sim-section">
+        <div class="sim-row">
+          <label for="drone-model-select" class="sim-label sim-label--tight">Drone Profile</label>
+          <span id="drone-flight-time" class="sim-chip">42 min</span>
+        </div>
+        <select id="drone-model-select" class="sim-select">
+          ${profileOptions}
+          <option value="custom">Custom Manual</option>
+        </select>
+
+        <p class="sim-note">Choose a real-world profile or switch to Custom Manual for tuning.</p>
+
+        <div class="sim-row sim-row--gap">
+          <button id="btn-reset-drone" class="sim-btn">Load Profile</button>
+        </div>
+      </section>
+
+      <section class="sim-section">
+        <div class="sim-row">
+          <span class="sim-label">Flight Parameters</span>
+          <span class="sim-chip">Editable</span>
+        </div>
+        <div class="sim-input-grid">
+          <label class="sim-label sim-label--tight" for="drone-weight">Weight (kg)</label>
+          <input id="drone-weight" class="sim-input" type="number" min="0.1" max="12" step="0.05" />
+
+          <label class="sim-label sim-label--tight" for="drone-battery">Battery (mAh)</label>
+          <input id="drone-battery" class="sim-input" type="number" min="400" max="30000" step="50" />
+
+          <label class="sim-label sim-label--tight" for="drone-max-speed">Max Speed (m/s)</label>
+          <input id="drone-max-speed" class="sim-input" type="number" min="3" max="30" step="0.1" />
+
+          <label class="sim-label sim-label--tight" for="drone-max-accel">Max Accel (m/s²)</label>
+          <input id="drone-max-accel" class="sim-input" type="number" min="4" max="28" step="0.1" />
+
+          <label class="sim-label sim-label--tight" for="drone-thrust">Thrust Factor</label>
+          <input id="drone-thrust" class="sim-input" type="number" min="0.60" max="1.60" step="0.01" />
+
+          <label class="sim-label sim-label--tight" for="drone-damping">Damping (0-1)</label>
+          <input id="drone-damping" class="sim-input" type="number" min="0.70" max="0.98" step="0.005" />
+
+          <label class="sim-label sim-label--tight" for="drone-payload">Payload (kg)</label>
+          <input id="drone-payload" class="sim-input" type="number" min="0" max="6" step="0.05" />
+        </div>
+
+        <p class="sim-note">Higher thrust improves climb and punch-out; lower thrust feels heavy and sluggish.</p>
+
+        <div class="sim-row sim-row--gap">
+          <button id="btn-apply-drone" class="sim-btn sim-btn--accent">Apply Profile</button>
+          <button id="btn-reset-drone-params" class="sim-btn">Reset Params</button>
+        </div>
+      </section>
 
       <section class="sim-section">
         <label for="scenario-select" class="sim-label">Scenario</label>
@@ -561,6 +763,17 @@ class DroneSimulatorApp {
 
     this.ui.panel = panel;
     this.ui.log = panel.querySelector("#mavlink-log");
+    this.ui.droneModelSelect = panel.querySelector("#drone-model-select");
+    this.ui.droneWeightInput = panel.querySelector("#drone-weight");
+    this.ui.droneBatteryInput = panel.querySelector("#drone-battery");
+    this.ui.droneMaxSpeedInput = panel.querySelector("#drone-max-speed");
+    this.ui.droneMaxAccelInput = panel.querySelector("#drone-max-accel");
+    this.ui.droneThrustInput = panel.querySelector("#drone-thrust");
+    this.ui.droneDampingInput = panel.querySelector("#drone-damping");
+    this.ui.dronePayloadInput = panel.querySelector("#drone-payload");
+    this.ui.droneFlightTimeChip = panel.querySelector("#drone-flight-time");
+    this.ui.droneApplyBtn = panel.querySelector("#btn-apply-drone");
+    this.ui.droneResetBtn = panel.querySelector("#btn-reset-drone");
     this.ui.scenarioSelect = panel.querySelector("#scenario-select");
     this.ui.missionStatus = panel.querySelector("#mission-status");
     this.ui.missionSpeed = panel.querySelector("#mission-speed");
@@ -571,8 +784,53 @@ class DroneSimulatorApp {
     this.ui.clearMissionBtn = panel.querySelector("#btn-clear-mission");
     this.ui.scenarioBadge = panel.querySelector("#scenario-badge");
 
+    if (this.ui.droneModelSelect) {
+      this.ui.droneModelSelect.value = DEFAULT_PROFILE_KEY;
+    }
+
     this.ui.scenarioSelect.addEventListener("change", (event) => {
       this._setScenario(event.target.value);
+    });
+
+    this.ui.droneModelSelect.addEventListener("change", () => {
+      const selected = this.ui.droneModelSelect.value;
+      if (selected === "custom") {
+        this._showSystemNotice(
+          "Custom mode: edit parameters and click Apply Profile.",
+          "info",
+          2600,
+        );
+        return;
+      }
+      this._applyDroneProfile(selected, DRONE_PROFILES[selected]);
+    });
+
+    this.ui.droneApplyBtn.addEventListener("click", () => {
+      const customProfile = this._getDroneProfileFromInputs();
+      this._applyDroneProfile("custom", customProfile);
+      if (this.ui.droneModelSelect) {
+        this.ui.droneModelSelect.value = "custom";
+      }
+    });
+
+    this.ui.droneResetBtn.addEventListener("click", () => {
+      const selected = this.ui.droneModelSelect?.value;
+      const fallbackKey =
+        selected && selected !== "custom" ? selected : DEFAULT_PROFILE_KEY;
+      this._applyDroneProfile(fallbackKey, DRONE_PROFILES[fallbackKey]);
+      if (this.ui.droneModelSelect) {
+        this.ui.droneModelSelect.value = fallbackKey;
+      }
+    });
+
+    panel.querySelector("#btn-reset-drone-params")?.addEventListener("click", () => {
+      const selected = this.ui.droneModelSelect?.value;
+      const fallbackKey =
+        selected && selected !== "custom" ? selected : DEFAULT_PROFILE_KEY;
+      this._applyDroneProfile(fallbackKey, DRONE_PROFILES[fallbackKey]);
+      if (this.ui.droneModelSelect) {
+        this.ui.droneModelSelect.value = fallbackKey;
+      }
     });
 
     this.ui.planningBtn.addEventListener("click", () =>
@@ -591,6 +849,154 @@ class DroneSimulatorApp {
       this.missionSpeed = Number(this.ui.missionSpeed.value);
       this.ui.missionSpeedValue.textContent = `${this.missionSpeed.toFixed(2)}x`;
     });
+
+    this._applyDroneProfile(DEFAULT_PROFILE_KEY, DRONE_PROFILES[DEFAULT_PROFILE_KEY]);
+  }
+
+  _syncDroneProfileInputs(profile) {
+    if (!profile) return;
+    if (this.ui.droneWeightInput)
+      this.ui.droneWeightInput.value = profile.weightKg.toFixed(2);
+    if (this.ui.droneBatteryInput)
+      this.ui.droneBatteryInput.value = String(Math.round(profile.batteryMah));
+    if (this.ui.droneMaxSpeedInput)
+      this.ui.droneMaxSpeedInput.value = profile.maxSpeed.toFixed(1);
+    if (this.ui.droneMaxAccelInput)
+      this.ui.droneMaxAccelInput.value = profile.maxAcceleration.toFixed(1);
+    if (this.ui.droneThrustInput)
+      this.ui.droneThrustInput.value = profile.thrustFactor.toFixed(2);
+    if (this.ui.droneDampingInput)
+      this.ui.droneDampingInput.value = profile.linearDamping.toFixed(3);
+    if (this.ui.dronePayloadInput)
+      this.ui.dronePayloadInput.value = profile.payloadKg.toFixed(2);
+    if (this.ui.droneFlightTimeChip) {
+      this.ui.droneFlightTimeChip.textContent = `${Math.round(profile.estimatedFlightTimeMin)} min`;
+    }
+  }
+
+  _getDroneProfileFromInputs() {
+    const numberValue = (input, fallback) => {
+      const n = Number(input?.value);
+      return Number.isFinite(n) ? n : fallback;
+    };
+
+    const baseline = this.currentDroneProfile || DRONE_PROFILES[DEFAULT_PROFILE_KEY];
+    const weightKg = THREE.MathUtils.clamp(
+      numberValue(this.ui.droneWeightInput, baseline.weightKg),
+      0.1,
+      12,
+    );
+    const batteryMah = THREE.MathUtils.clamp(
+      numberValue(this.ui.droneBatteryInput, baseline.batteryMah),
+      400,
+      30000,
+    );
+    const maxSpeed = THREE.MathUtils.clamp(
+      numberValue(this.ui.droneMaxSpeedInput, baseline.maxSpeed),
+      3,
+      30,
+    );
+    const maxAcceleration = THREE.MathUtils.clamp(
+      numberValue(this.ui.droneMaxAccelInput, baseline.maxAcceleration),
+      4,
+      28,
+    );
+    const thrustFactor = THREE.MathUtils.clamp(
+      numberValue(this.ui.droneThrustInput, baseline.thrustFactor ?? 1.0),
+      0.6,
+      1.6,
+    );
+    const linearDamping = THREE.MathUtils.clamp(
+      numberValue(this.ui.droneDampingInput, baseline.linearDamping),
+      0.7,
+      0.98,
+    );
+    const payloadKg = THREE.MathUtils.clamp(
+      numberValue(this.ui.dronePayloadInput, baseline.payloadKg),
+      0,
+      6,
+    );
+
+    const estimatedFlightTimeMin = THREE.MathUtils.clamp(
+      (batteryMah / 220) * (1 / Math.max(0.35, weightKg + payloadKg * 0.5)),
+      5,
+      70,
+    );
+
+    return {
+      key: "custom",
+      name: "Custom Manual",
+      weightKg,
+      batteryMah,
+      maxSpeed,
+      maxAcceleration,
+      thrustFactor,
+      linearDamping,
+      payloadKg,
+      estimatedFlightTimeMin,
+    };
+  }
+
+  _applyDroneProfile(profileKey, profileData) {
+    const source = profileData || DRONE_PROFILES[profileKey];
+    if (!source) return;
+
+    const profile = {
+      key: profileKey,
+      name: source.name,
+      weightKg: THREE.MathUtils.clamp(Number(source.weightKg) || 1.0, 0.1, 12),
+      batteryMah: THREE.MathUtils.clamp(
+        Number(source.batteryMah) || 5200,
+        400,
+        30000,
+      ),
+      maxSpeed: THREE.MathUtils.clamp(Number(source.maxSpeed) || 11, 3, 30),
+      maxAcceleration: THREE.MathUtils.clamp(
+        Number(source.maxAcceleration) || 13,
+        4,
+        28,
+      ),
+      thrustFactor: THREE.MathUtils.clamp(
+        Number(source.thrustFactor) || 1.0,
+        0.6,
+        1.6,
+      ),
+      linearDamping: THREE.MathUtils.clamp(
+        Number(source.linearDamping) || 0.88,
+        0.7,
+        0.98,
+      ),
+      payloadKg: THREE.MathUtils.clamp(Number(source.payloadKg) || 0, 0, 6),
+      estimatedFlightTimeMin: THREE.MathUtils.clamp(
+        Number(source.estimatedFlightTimeMin) || 20,
+        5,
+        70,
+      ),
+    };
+
+    this.currentDroneProfile = profile;
+    this.activeDroneProfileKey = profileKey;
+    this.drone.setFlightConfig({
+      maxSpeed: profile.maxSpeed,
+      maxAcceleration: profile.maxAcceleration,
+      thrustFactor: profile.thrustFactor,
+      linearDamping: profile.linearDamping,
+      weightKg: profile.weightKg,
+      payloadKg: profile.payloadKg,
+    });
+    this._syncDroneProfileInputs(profile);
+
+    this.telemetry.battery = 100;
+    this.lowBatteryWarned = false;
+    this.batteryEmergencyActive = false;
+    this.batteryEmergencyLanded = false;
+    if (this.commandMode === "emergency-land") this.commandMode = "hover";
+
+    this._showSystemNotice(`Profile applied: ${profile.name}`, "info", 2200);
+    this._logMavlink(
+      "PARAM_VALUE",
+      `PROFILE=${profile.name} MASS=${profile.weightKg.toFixed(2)}kg BAT=${Math.round(profile.batteryMah)}mAh VMAX=${profile.maxSpeed.toFixed(1)} ACC=${profile.maxAcceleration.toFixed(1)} THR=${profile.thrustFactor.toFixed(2)}`,
+    );
   }
 
   _setupIntroOverlay() {
@@ -767,7 +1173,7 @@ class DroneSimulatorApp {
     this.audio.context = new AudioContextRef();
     const ctx = this.audio.context;
     const master = ctx.createGain();
-    master.gain.value = 0.18;
+    master.gain.value = 0.85;
     master.connect(ctx.destination);
 
     const osc = ctx.createOscillator();
@@ -849,8 +1255,8 @@ class DroneSimulatorApp {
 
     const targetGain =
       altitude > 0.05
-        ? THREE.MathUtils.clamp(0.01 + speed * 0.005, 0.008, 0.09)
-        : 0.002;
+        ? THREE.MathUtils.clamp(0.04 + speed * 0.012, 0.035, 0.22)
+        : 0.012;
     const targetFreq = THREE.MathUtils.clamp(
       88 + speed * 16 + altitude * 2,
       85,
@@ -1002,6 +1408,12 @@ class DroneSimulatorApp {
   _setScenario(name) {
     this.scenario = name;
     this.drone.setAvoidanceEnabled(name === "obstacle");
+
+    if (name === "wind") {
+      this.windDirection = Math.random() * Math.PI * 2;
+    } else {
+      this.windVector.set(0, 0, 0);
+    }
 
     const label = name.replace("-", " ").toUpperCase();
     if (this.ui.scenarioBadge) this.ui.scenarioBadge.textContent = label;
@@ -1206,13 +1618,30 @@ class DroneSimulatorApp {
     };
 
     if (this.scenario === "wind") {
+      // Slowly drifting heading so the wind feels alive but keeps a clear direction.
+      this.windDirection += delta * 0.08;
+      const dirX = Math.cos(this.windDirection);
+      const dirZ = Math.sin(this.windDirection);
+
+      // Layered gusts: a slow swell plus a faster gust rider.
+      const gust =
+        Math.sin(this.elapsed * 0.55) * 2.4 +
+        Math.sin(this.elapsed * 1.7 + 1.3) * 1.3;
+      const magnitude = Math.max(0.6, 3.6 + gust);
+
+      // Turbulence: uncorrelated jitter on each axis.
+      const turbX = (Math.random() - 0.5) * 1.1;
+      const turbZ = (Math.random() - 0.5) * 1.1;
+      const turbY = (Math.random() - 0.5) * 0.7;
+
       this.windVector.set(
-        Math.sin(this.elapsed * 0.8) * 0.3 + (Math.random() - 0.5) * 0.04,
-        0,
-        Math.cos(this.elapsed * 0.55) * 0.22 + (Math.random() - 0.5) * 0.04,
+        dirX * magnitude + turbX,
+        turbY,
+        dirZ * magnitude + turbZ,
       );
       effects.windStrength = this.windVector.length();
-      this.drone.velocity.addScaledVector(this.windVector, delta * 2.2);
+      // Treat wind as an acceleration (m/s^2); integrates into velocity over delta.
+      this.drone.velocity.addScaledVector(this.windVector, delta);
     }
 
     if (this.scenario === "gps-denied") {
@@ -1302,12 +1731,21 @@ class DroneSimulatorApp {
 
   _updateTelemetryState(delta, altitude, speed, effects) {
     const inFlight = speed > 0.06 || altitude > 0.08;
+    const profile = this.currentDroneProfile || DRONE_PROFILES[DEFAULT_PROFILE_KEY];
 
     if (inFlight) {
       let drain = 0.22 + Math.max(0, speed - 0.2) * 0.07 + altitude * 0.012;
       if (this.scenario === "wind") drain += effects.windStrength * 0.05;
       if (effects.vslamActive) drain += 0.06;
       if (effects.motorFailureActive) drain += 0.03;
+
+      const batteryScale = THREE.MathUtils.clamp(5200 / profile.batteryMah, 0.25, 2.2);
+      const massScale = THREE.MathUtils.clamp(profile.weightKg / 1.0, 0.6, 2.5);
+      const payloadScale = THREE.MathUtils.clamp(1 + profile.payloadKg * 0.18, 1, 2.1);
+      const speedEnvelope = THREE.MathUtils.clamp(speed / Math.max(3, profile.maxSpeed), 0.35, 1.35);
+      const thrustScale = THREE.MathUtils.clamp(0.78 + (profile.thrustFactor || 1.0) * 0.35, 0.7, 1.45);
+      drain *= batteryScale * massScale * payloadScale * speedEnvelope * thrustScale;
+
       this.telemetry.battery = Math.max(
         0,
         this.telemetry.battery - drain * delta,
@@ -1331,6 +1769,9 @@ class DroneSimulatorApp {
     this.telemetry.cpu = THREE.MathUtils.clamp(
       10 +
         speed * 6 +
+        (profile.thrustFactor || 1.0) * 2.6 +
+        (profile.maxSpeed > 12 ? 2 : 0) +
+        profile.payloadKg * 2.2 +
         (this.missionActive ? 8 : 0) +
         (this.commandMode === "hover" ? 2 : 0) +
         (this.commandMode === "land" ? 4 : 0) +
@@ -1340,7 +1781,42 @@ class DroneSimulatorApp {
       98,
     );
 
-    if (effects.motorFailureActive) {
+    if (!this.lowBatteryWarned && this.telemetry.battery <= 10) {
+      this.lowBatteryWarned = true;
+      this._showSystemNotice(
+        "Battery low (10%). Return to base immediately.",
+        "warn",
+        4200,
+      );
+      this._logMavlink(
+        "STATUSTEXT",
+        "LOW_BATTERY 10%: return-to-home recommended",
+      );
+    }
+
+    if (!this.batteryEmergencyActive && this.telemetry.battery <= 0) {
+      this.batteryEmergencyActive = true;
+      this.commandMode = "emergency-land";
+      this.telemetryInput.set(0, 0, 0);
+      this.missionActive = false;
+      this.missionPaused = false;
+      this._refreshMissionUi();
+
+      this._showSystemNotice(
+        "Battery depleted (0%). Emergency landing initiated.",
+        "danger",
+        5000,
+      );
+      this._logMavlink(
+        "STATUSTEXT",
+        "BATTERY_DEPLETED 0%: emergency landing (failsafe)",
+      );
+      this._logMavlink("COMMAND_LONG", "NAV_LAND reason=BATTERY_FAILSAFE");
+    }
+
+    if (this.batteryEmergencyActive) {
+      this.telemetry.status = altitude > 0.05 ? "EMERG_LAND" : "BATT_EMPTY";
+    } else if (effects.motorFailureActive) {
       this.telemetry.status = "MOTOR_FAIL";
     } else if (this.missionActive && !this.missionPaused) {
       this.telemetry.status = "AUTO";
@@ -1453,8 +1929,21 @@ class DroneSimulatorApp {
 
     const keyboardInput = this.keyboard.getInputVector();
 
+    // ✅ ADD THIS — feed keyboard into PID controller
+this.droneController.setInput(
+  keyboardInput.x,   // roll   (A/D)
+  keyboardInput.z,   // pitch  (W/S)
+  0,                 // yaw
+  keyboardInput.y    // throttle (Q/E)
+);
+this.droneController.update(this.drone.group, delta);
+
+// ✅ ADD THIS — update PID panel telemetry display
+const tel = this.droneController.getTelemetry(this.drone.group);
+this.pidPanel.updateTelemetry(tel.altitude, tel.speed);
+
     // Keyboard should always be able to take control back from LAND/HOVER modes.
-    if (keyboardInput.lengthSq() > 0) {
+    if (keyboardInput.lengthSq() > 0 && !this.batteryEmergencyActive) {
       this.commandMode = "manual";
       this.telemetryInput.set(0, 0, 0);
       if (this.missionActive) {
@@ -1473,6 +1962,28 @@ class DroneSimulatorApp {
     if (this.commandMode === "hover") {
       input.set(0, 0, 0);
       this.drone.velocity.multiplyScalar(Math.pow(0.9, delta * 60));
+    } else if (this.commandMode === "emergency-land") {
+      input.set(0, -2.2, 0);
+      this.drone.velocity.x *= Math.pow(0.72, delta * 60);
+      this.drone.velocity.z *= Math.pow(0.72, delta * 60);
+      this.drone.velocity.y = Math.min(this.drone.velocity.y, -7.0);
+
+      if (altitude <= 0.03) {
+        this.commandMode = "hover";
+        this.telemetryInput.set(0, 0, 0);
+        if (!this.batteryEmergencyLanded) {
+          this.batteryEmergencyLanded = true;
+          this._showSystemNotice(
+            "Emergency landing complete. Battery exhausted.",
+            "danger",
+            4500,
+          );
+          this._logMavlink(
+            "STATUSTEXT",
+            "LAND_COMPLETE reason=BATTERY_FAILSAFE",
+          );
+        }
+      }
     } else if (this.commandMode === "land") {
       input.set(0, -0.65, 0);
       this.drone.velocity.x *= Math.pow(0.85, delta * 60);

@@ -2,10 +2,14 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { DroneVisual } from "./dronevisuals.js";
 
-const ARM_LENGTH = 0.95;
-const MAX_ACCELERATION = 13.0;
-const MAX_SPEED = 11.0;
-const LINEAR_DAMPING = 0.88;
+const DEFAULT_FLIGHT_CONFIG = {
+  maxAcceleration: 13.0,
+  maxSpeed: 11.0,
+  thrustFactor: 1.0,
+  linearDamping: 0.88,
+  weightKg: 1.0,
+  payloadKg: 0.2,
+};
 
 /**
  * Reusable drone entity with mesh, propeller animation, and movement physics.
@@ -23,11 +27,59 @@ export class Drone {
     this.obstacles = [];
     this.avoidanceEnabled = false;
     this.collisionsThisFrame = 0;
-    this._collisionRadius = 0.62;
+    this._collisionPadding = 0.05;
     this._obstacleBounds = new THREE.Box3();
     this.visual = null;
+    this._droneBounds = new THREE.Box3();
+    this.flightConfig = { ...DEFAULT_FLIGHT_CONFIG };
 
     this._buildDroneGeometry();
+    this.setFlightConfig(this.flightConfig);
+  }
+
+  setFlightConfig(config = {}) {
+    this.flightConfig = {
+      ...this.flightConfig,
+      ...config,
+    };
+
+    this.flightConfig.maxAcceleration = THREE.MathUtils.clamp(
+      Number(this.flightConfig.maxAcceleration) ||
+        DEFAULT_FLIGHT_CONFIG.maxAcceleration,
+      4,
+      28,
+    );
+    this.flightConfig.maxSpeed = THREE.MathUtils.clamp(
+      Number(this.flightConfig.maxSpeed) || DEFAULT_FLIGHT_CONFIG.maxSpeed,
+      3,
+      30,
+    );
+    this.flightConfig.thrustFactor = THREE.MathUtils.clamp(
+      Number(this.flightConfig.thrustFactor) ||
+        DEFAULT_FLIGHT_CONFIG.thrustFactor,
+      0.6,
+      1.6,
+    );
+    this.flightConfig.linearDamping = THREE.MathUtils.clamp(
+      Number(this.flightConfig.linearDamping) ||
+        DEFAULT_FLIGHT_CONFIG.linearDamping,
+      0.7,
+      0.98,
+    );
+    this.flightConfig.weightKg = THREE.MathUtils.clamp(
+      Number(this.flightConfig.weightKg) || DEFAULT_FLIGHT_CONFIG.weightKg,
+      0.1,
+      12,
+    );
+    this.flightConfig.payloadKg = THREE.MathUtils.clamp(
+      Number(this.flightConfig.payloadKg) || DEFAULT_FLIGHT_CONFIG.payloadKg,
+      0,
+      6,
+    );
+  }
+
+  getFlightConfig() {
+    return { ...this.flightConfig };
   }
 
   _buildDroneGeometry() {
@@ -72,7 +124,10 @@ export class Drone {
    * @param {THREE.Vector3} input Movement input vector
    */
   update(delta, input) {
-    this._targetAcceleration.copy(input).multiplyScalar(MAX_ACCELERATION);
+    const thrustBoost = this.flightConfig.thrustFactor;
+    this._targetAcceleration
+      .copy(input)
+      .multiplyScalar(this.flightConfig.maxAcceleration * thrustBoost);
 
     // Placeholder for future obstacle-avoidance force blending.
     if (this.avoidanceEnabled && this.obstacles.length) {
@@ -86,12 +141,12 @@ export class Drone {
     this.velocity.addScaledVector(this.acceleration, delta);
 
     // Clamp max speed.
-    if (this.velocity.length() > MAX_SPEED) {
-      this.velocity.setLength(MAX_SPEED);
+    if (this.velocity.length() > this.flightConfig.maxSpeed) {
+      this.velocity.setLength(this.flightConfig.maxSpeed);
     }
 
     // Exponential damping for stable feel at different frame rates.
-    const damping = Math.pow(LINEAR_DAMPING, delta * 60);
+    const damping = Math.pow(this.flightConfig.linearDamping, delta * 60);
     this.velocity.multiplyScalar(damping);
 
     this.group.position.addScaledVector(this.velocity, delta);
@@ -122,7 +177,11 @@ export class Drone {
     );
 
     // Propeller speed scales with current acceleration magnitude.
-    const throttle = THREE.MathUtils.clamp(this.acceleration.length() / MAX_ACCELERATION, 0, 1);
+    const throttle = THREE.MathUtils.clamp(
+      this.acceleration.length() / this.flightConfig.maxAcceleration,
+      0,
+      1,
+    );
     this.visual?.setThrottle(throttle);
     this.visual?.update(delta);
   }
@@ -136,7 +195,9 @@ export class Drone {
       const distance = away.length();
       if (distance > 0.0001 && distance < threshold) {
         const strength =
-          ((threshold - distance) / threshold) * MAX_ACCELERATION * 0.5;
+          ((threshold - distance) / threshold) *
+          this.flightConfig.maxAcceleration *
+          0.5;
         force.add(away.normalize().multiplyScalar(strength));
       }
     });
@@ -152,59 +213,53 @@ export class Drone {
       const obstacle = this.obstacles[i];
       this._obstacleBounds
         .setFromObject(obstacle)
-        .expandByScalar(this._collisionRadius);
+        .expandByScalar(this._collisionPadding);
+      this._droneBounds.setFromObject(this.group);
 
-      const p = this.group.position;
-      if (!this._obstacleBounds.containsPoint(p)) continue;
+      if (!this._droneBounds.intersectsBox(this._obstacleBounds)) continue;
 
       this.collisionsThisFrame += 1;
 
-      const distances = {
-        minX: Math.abs(p.x - this._obstacleBounds.min.x),
-        maxX: Math.abs(this._obstacleBounds.max.x - p.x),
-        minY: Math.abs(p.y - this._obstacleBounds.min.y),
-        maxY: Math.abs(this._obstacleBounds.max.y - p.y),
-        minZ: Math.abs(p.z - this._obstacleBounds.min.z),
-        maxZ: Math.abs(this._obstacleBounds.max.z - p.z),
-      };
+      const overlapX =
+        Math.min(this._droneBounds.max.x, this._obstacleBounds.max.x) -
+        Math.max(this._droneBounds.min.x, this._obstacleBounds.min.x);
+      const overlapY =
+        Math.min(this._droneBounds.max.y, this._obstacleBounds.max.y) -
+        Math.max(this._droneBounds.min.y, this._obstacleBounds.min.y);
+      const overlapZ =
+        Math.min(this._droneBounds.max.z, this._obstacleBounds.max.z) -
+        Math.max(this._droneBounds.min.z, this._obstacleBounds.min.z);
 
-      let side = "minX";
-      let minDistance = distances.minX;
-      Object.entries(distances).forEach(([name, value]) => {
-        if (value < minDistance) {
-          minDistance = value;
-          side = name;
+      const overlaps = { x: overlapX, y: overlapY, z: overlapZ };
+
+      let axis = "x";
+      let minOverlap = overlaps.x;
+      Object.entries(overlaps).forEach(([name, value]) => {
+        if (value < minOverlap) {
+          minOverlap = value;
+          axis = name;
         }
       });
 
       const epsilon = 0.001;
-      switch (side) {
-        case "minX":
-          p.x = this._obstacleBounds.min.x - epsilon;
-          this.velocity.x = Math.min(0, this.velocity.x) * 0.2;
-          break;
-        case "maxX":
-          p.x = this._obstacleBounds.max.x + epsilon;
-          this.velocity.x = Math.max(0, this.velocity.x) * 0.2;
-          break;
-        case "minY":
-          p.y = Math.max(0.55, this._obstacleBounds.min.y - epsilon);
-          this.velocity.y = Math.min(0, this.velocity.y) * 0.2;
-          break;
-        case "maxY":
-          p.y = this._obstacleBounds.max.y + epsilon;
-          this.velocity.y = Math.max(0, this.velocity.y) * 0.2;
-          break;
-        case "minZ":
-          p.z = this._obstacleBounds.min.z - epsilon;
-          this.velocity.z = Math.min(0, this.velocity.z) * 0.2;
-          break;
-        case "maxZ":
-          p.z = this._obstacleBounds.max.z + epsilon;
-          this.velocity.z = Math.max(0, this.velocity.z) * 0.2;
-          break;
-        default:
-          break;
+      const p = this.group.position;
+      const droneCenter = this._droneBounds.getCenter(new THREE.Vector3());
+      const obstacleCenter = this._obstacleBounds.getCenter(
+        new THREE.Vector3(),
+      );
+
+      if (axis === "x") {
+        const dir = droneCenter.x >= obstacleCenter.x ? 1 : -1;
+        p.x += (minOverlap + epsilon) * dir;
+        this.velocity.x *= 0.2;
+      } else if (axis === "y") {
+        const dir = droneCenter.y >= obstacleCenter.y ? 1 : -1;
+        p.y = Math.max(0.55, p.y + (minOverlap + epsilon) * dir);
+        this.velocity.y *= 0.2;
+      } else {
+        const dir = droneCenter.z >= obstacleCenter.z ? 1 : -1;
+        p.z += (minOverlap + epsilon) * dir;
+        this.velocity.z *= 0.2;
       }
     }
   }
